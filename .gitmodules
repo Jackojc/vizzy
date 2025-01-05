@@ -16,3 +16,4 @@
 [submodule "deps/luajit"]
 	path = deps/luajit
 	url = https://luajit.org/git/luajit.git
+	ignore = dirty
