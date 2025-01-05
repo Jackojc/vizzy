@@ -17,3 +17,6 @@
 	path = deps/luajit
 	url = https://luajit.org/git/luajit.git
 	ignore = dirty
+[submodule "deps/sfml"]
+	path = deps/sfml
+	url = https://github.com/SFML/SFML/
