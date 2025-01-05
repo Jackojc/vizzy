@@ -10,3 +10,6 @@
 [submodule "deps/sanitizers-cmake"]
 	path = deps/sanitizers-cmake
 	url = https://github.com/arsenm/sanitizers-cmake
+[submodule "deps/sol2"]
+	path = deps/sol2
+	url = https://github.com/ThePhD/sol2
