@@ -13,3 +13,6 @@
 [submodule "deps/sol2"]
 	path = deps/sol2
 	url = https://github.com/ThePhD/sol2
+[submodule "deps/luajit"]
+	path = deps/luajit
+	url = https://luajit.org/git/luajit.git
