@@ -5,21 +5,8 @@ project(vizzy
 	VERSION 1.0
 	DESCRIPTION "MIDI Visualiser")
 
-ExternalProject_Add(luajit_project
-  SOURCE_DIR "${CMAKE_SOURCE_DIR}/deps/luajit"
-  PREFIX "${CMAKE_SOURCE_DIR}/deps/luajit"
-  BUILD_IN_SOURCE true
-  CONFIGURE_COMMAND ""
-  BUILD_COMMAND make
-  INSTALL_COMMAND ""
-)
-
-ExternalProject_Get_Property(luajit_project install_dir)
-
-add_library(luajit STATIC IMPORTED)
-set_property(TARGET luajit PROPERTY IMPORTED_LOCATION ${CMAKE_SOURCE_DIR}/deps/luajit/src/libluajit.a)
-
-add_dependencies(luajit luajit_project)
+find_package(SDL2 REQUIRED)
+find_package(Lua51 REQUIRED)
 
 add_executable(${PROJECT_NAME} src/vizzy.cpp src/glad.c)
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_20)
@@ -28,14 +15,17 @@ set(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/deps/sanitizers-cmake/cmake" ${CMAKE_
 find_package(Sanitizers)
 add_sanitizers(${PROJECT_NAME})
 
+target_include_directories(${PROJECT_NAME} PUBLIC ${SDL2_INCLUDE_DIRS})
+target_include_directories(${PROJECT_NAME} PUBLIC ${LUA_INCLUDE_DIR})
+
 target_include_directories(${PROJECT_NAME} PUBLIC deps/conflict/include)
 target_include_directories(${PROJECT_NAME} PUBLIC deps/fmt/include)
 target_include_directories(${PROJECT_NAME} PUBLIC deps/libremidi/include)
 target_include_directories(${PROJECT_NAME} PUBLIC deps/sol2/include)
-target_include_directories(${PROJECT_NAME} PUBLIC deps/luajit/src)
+
 target_include_directories(${PROJECT_NAME} PUBLIC include)
 
-target_link_libraries(${PROJECT_NAME} PRIVATE luajit)
+target_link_libraries(${PROJECT_NAME} PRIVATE ${LUA_LIBRARIES})
 
 add_subdirectory(deps/libremidi/)
 target_link_libraries(${PROJECT_NAME} PRIVATE libremidi)
