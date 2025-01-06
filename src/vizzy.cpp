@@ -24,39 +24,49 @@
 #include <fmt/ostream.h>
 
 #include <glad/glad.h>
-#include <SDL2/SDL.h>
 #include <cglm/struct.h>
 
 #define SOL_ALL_SAFETIES_ON 1
 #include <sol/sol.hpp>
 
+#include <SDL2/SDL.h>
+
 #include <vizzy/vizzy.hpp>
 
 int main(int, const char*[]) {
-	// VIZZY_LOG(vizzy::LogKind::Debug, "hello");
-	// VIZZY_LOG(vizzy::LogKind::Trace, "hello");
-	// VIZZY_LOG(vizzy::LogKind::Warn, "hello");
-	// VIZZY_LOG(vizzy::LogKind::Error, "hello");
-	// VIZZY_LOG(vizzy::LogKind::Okay, "hello");
+	try {
+		// VIZZY_LOG(vizzy::LogKind::Debug, "hello");
+		// VIZZY_LOG(vizzy::LogKind::Trace, "hello");
+		// VIZZY_LOG(vizzy::LogKind::Warn, "hello");
+		// VIZZY_LOG(vizzy::LogKind::Error, "hello");
+		// VIZZY_LOG(vizzy::LogKind::Okay, "hello");
 
-	// VIZZY_DEBUG("hello");
-	// VIZZY_TRACE("hello");
-	// VIZZY_WARN("hello");
-	// VIZZY_ERROR("hello");
-	// VIZZY_OKAY("hello");
+		// VIZZY_DEBUG("hello");
+		// VIZZY_TRACE("hello");
+		// VIZZY_WARN("hello");
+		// VIZZY_ERROR("hello");
+		// VIZZY_OKAY("hello");
 
-	// int x = VIZZY_INSPECT(5 + 5);
-	// VIZZY_OKAY(x);
+		// int x = VIZZY_INSPECT(5 + 5);
+		// VIZZY_OKAY(x);
 
-	// VIZZY_LOG(vizzy::LogKind::Debug);
-	// VIZZY_LOG(vizzy::LogKind::Debug, 123);
-	// VIZZY_LOG(vizzy::LogKind::Debug, "fiodfgh");
+		// VIZZY_LOG(vizzy::LogKind::Debug);
+		// VIZZY_LOG(vizzy::LogKind::Debug, 123);
+		// VIZZY_LOG(vizzy::LogKind::Debug, "fiodfgh");
 
-	// VIZZY_WHEREAMI();
+		// VIZZY_WHEREAMI();
 
-	sol::state lua;
-	lua.open_libraries(sol::lib::base, sol::lib::coroutine, sol::lib::string, sol::lib::io);
+		sol::state lua;
+		lua.open_libraries(sol::lib::base, sol::lib::coroutine, sol::lib::string, sol::lib::io);
 
-	lua.script("print('hello from the other side')");
+		lua.script("print('hello from the other side')");
+
+		// vizzy::die("fuck");
+	}
+
+	catch (vizzy::Fatal e) {
+		fmt::print(std::cerr, fmt::runtime(e.what()));
+	}
+
 	return 0;
 }

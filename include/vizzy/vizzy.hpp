@@ -1,9 +1,11 @@
 #ifndef VIZZY_HPP
 #define VIZZY_HPP
 
+#include <iostream>
 #include <utility>
 
 #include <array>
+#include <optional>
 #include <string_view>
 
 #include <ostream>
@@ -14,6 +16,13 @@
 #include <fmt/ranges.h>
 #include <fmt/color.h>
 #include <fmt/ostream.h>
+
+// Definitions
+namespace vizzy {
+#define VIZZY_EXE           "Vizzy"
+#define VIZZY_WINDOW_WIDTH  800
+#define VIZZY_WINDOW_HEIGHT 600
+}
 
 // Macros
 namespace vizzy {
@@ -111,13 +120,13 @@ namespace vizzy {
 #define VIZZY_COLOUR_HERE  VIZZY_FG_YELLOW_BRIGHT
 
 #define VIZZY_LOG_LEVELS \
-	X(Debug, "[.]", "debug  ", VIZZY_COLOUR_DEBUG) \
-	X(Trace, "[-]", "trace  ", VIZZY_COLOUR_TRACE) \
+	X(Debug, "[.]", "debug", VIZZY_COLOUR_DEBUG) \
+	X(Trace, "[-]", "trace", VIZZY_COLOUR_TRACE) \
 	X(Warn, "[*]", "warning", VIZZY_COLOUR_WARN) \
-	X(Error, "[!]", "error  ", VIZZY_COLOUR_ERROR) \
-	X(Okay, "[^]", "okay   ", VIZZY_COLOUR_OKAY) \
-	X(Expr, "[=]", "expr   ", VIZZY_COLOUR_EXPR) \
-	X(Here, "[/]", "here   ", VIZZY_COLOUR_HERE)
+	X(Error, "[!]", "error", VIZZY_COLOUR_ERROR) \
+	X(Okay, "[^]", "okay", VIZZY_COLOUR_OKAY) \
+	X(Expr, "[=]", "expr", VIZZY_COLOUR_EXPR) \
+	X(Here, "[/]", "here", VIZZY_COLOUR_HERE)
 
 #define X(x, y, z, w) x,
 	enum class LogKind {
@@ -166,63 +175,74 @@ struct fmt::formatter<vizzy::LogKind>: fmt::ostream_formatter {};
 
 namespace vizzy {
 
-	namespace detail {
-		struct LogInfo {
-			std::string_view file;
-			std::string_view line;
-			std::string_view func;
-		};
+	struct LogInfo {
+		std::string_view file;
+		std::string_view line;
+		std::string_view func;
+	};
 
+	namespace detail {
 		// Case where we have a format string and additional argument.
 		template <typename T, typename... Ts>
-		inline decltype(auto) log_impl_fmt(std::string_view fmt, T&& arg, Ts&&... args) {
-			fmt::print(stderr, fmt::runtime(fmt), std::forward<T>(arg), std::forward<Ts>(args)...);
+		inline decltype(auto) log_fmt(std::ostream& os, std::string_view fmt, T&& arg, Ts&&... args) {
+			fmt::print(os, fmt::runtime(fmt), std::forward<T>(arg), std::forward<Ts>(args)...);
 		}
 
 		// First argument is not a string but we still want to print it so we supply default format string.
 		template <typename T>
-		inline decltype(auto) log_impl_fmt(T&& arg) {
-			fmt::print(stderr, "{}", std::forward<T>(arg));
+		inline decltype(auto) log_fmt(std::ostream& os, T&& arg) {
+			fmt::print(os, "{}", std::forward<T>(arg));
 		}
+	}  // namespace detail
 
-		template <typename... Ts>
-		inline decltype(auto) log_impl(LogKind kind, detail::LogInfo info, Ts&&... args) {
-			fmt::print(stderr,
-				"{}{} {}" VIZZY_RESET " [{}:{}] ",
-				vizzy::log_colour_to_str(kind),
-				vizzy::log_to_str(kind),
-				vizzy::log_human_to_str(kind),
-				std::filesystem::relative(info.file).native(),
-				info.line);
+	template <typename... Ts>
+	inline decltype(auto) log(std::ostream& os, LogKind kind, std::optional<LogInfo> info, Ts&&... args) {
+		fmt::print(os, "{}{}" VIZZY_RESET, vizzy::log_colour_to_str(kind), vizzy::log_to_str(kind));
+
+		if (info.has_value()) {
+			auto [file, line, func] = info.value();
+
+			fmt::print(os, " [{}:{}] ", std::filesystem::relative(file).native(), line);
 
 			// Don't print function name for lambdas (which is the call operator)
-			if (info.func != "operator()") {
-				fmt::print(stderr, "`{}`" VIZZY_RESET, info.func);
+			if (func != "operator()") {
+				fmt::print(os, "`{}`" VIZZY_RESET, func);
 			}
-
-			if constexpr (sizeof...(Ts) > 0) {
-				fmt::print(stderr, " ");
-				detail::log_impl_fmt(std::forward<Ts>(args)...);
-			}
-
-			fmt::print(stderr, "\n");
 		}
 
+		fmt::print(os, " {}{}", vizzy::log_colour_to_str(kind), vizzy::log_human_to_str(kind));
+
+		if constexpr (sizeof...(Ts) > 0) {
+			fmt::print(os, ":" VIZZY_RESET " ");
+			detail::log_fmt(os, std::forward<Ts>(args)...);
+		}
+
+		fmt::print(os, "\n");
+	}
+
+	template <typename... Ts>
+	inline decltype(auto) log(LogKind kind, std::optional<LogInfo> info, Ts&&... args) {
+		return log(std::cerr, kind, info, std::forward<Ts>(args)...);
+	}
+
+	namespace detail {
 		template <typename T>
-		inline decltype(auto) inspect_impl(detail::LogInfo info, std::string_view expr_str, T&& expr) {
-			detail::log_impl(LogKind::Expr, info, "{} = {}", expr_str, std::forward<T>(expr));
+		inline decltype(auto) inspect(
+			std::ostream& os, std::optional<LogInfo> info, std::string_view expr_str, T&& expr) {
+			log(os, LogKind::Expr, info, "{} = {}", expr_str, std::forward<T>(expr));
 			return std::forward<T>(expr);
-		}
 
-	}  // namespace detail
+		}  // namespace detail
+	}
 
 // Log with file location info included.
 #define VIZZY_LOG(...) \
 	do { \
 		[VIZZY_VAR(func) = VIZZY_LOCATION_FUNC]<typename... Ts>( \
 			vizzy::LogKind VIZZY_VAR(kind), Ts&&... VIZZY_VAR(args)) { \
-			vizzy::detail::log_impl(VIZZY_VAR(kind), \
-				vizzy::detail::LogInfo { VIZZY_LOCATION_FILE, VIZZY_LOCATION_LINE, VIZZY_VAR(func) }, \
+			vizzy::log(std::cerr, \
+				VIZZY_VAR(kind), \
+				vizzy::LogInfo { VIZZY_LOCATION_FILE, VIZZY_LOCATION_LINE, VIZZY_VAR(func) }, \
 				std::forward<Ts>(VIZZY_VAR(args))...); \
 		}(__VA_ARGS__); \
 	} while (0)
@@ -257,8 +277,8 @@ namespace vizzy {
 // expression without needing to create temporary variables)
 #define VIZZY_INSPECT(expr) \
 	[&, VIZZY_VAR(func) = VIZZY_LOCATION_FUNC]() { \
-		return vizzy::detail::inspect_impl( \
-			vizzy::detail::LogInfo { VIZZY_LOCATION_FILE, VIZZY_LOCATION_LINE, VIZZY_VAR(func) }, \
+		return vizzy::detail::inspect(std::cerr, \
+			vizzy::LogInfo { VIZZY_LOCATION_FILE, VIZZY_LOCATION_LINE, VIZZY_VAR(func) }, \
 			VIZZY_STR(expr), \
 			(expr)); \
 	}()
@@ -272,6 +292,33 @@ namespace vizzy {
 						 "H" VIZZY_FG_RED "E" VIZZY_FG_RED_BRIGHT "R" VIZZY_FG_YELLOW "E" VIZZY_RESET); \
 	} while (0)
 
+	// Fatal errors
+	class Fatal: public std::runtime_error {
+		using runtime_error::runtime_error;
+	};
+
+	template <typename T, typename... Ts>
+	[[noreturn]] inline void die(T&& arg, Ts&&... args) {
+		std::stringstream ss;
+
+		if constexpr (std::is_same_v<T, vizzy::LogInfo>) {
+			vizzy::log(ss, LogKind::Error, std::forward<T>(arg), std::forward<Ts>(args)...);
+		}
+
+		else {
+			vizzy::log(ss, LogKind::Error, std::nullopt, std::forward<T>(arg), std::forward<Ts>(args)...);
+		}
+
+		throw Fatal { ss.str() };
+	}
+
+#define VIZZY_DIE(...) \
+	do { \
+		[VIZZY_VAR(func) = VIZZY_LOCATION_FUNC]<typename... Ts>(Ts&&... VIZZY_VAR(args)) { \
+			vizzy::die(vizzy::LogInfo { VIZZY_LOCATION_FILE, VIZZY_LOCATION_LINE, VIZZY_VAR(func) }, \
+				std::forward<Ts>(VIZZY_VAR(args))...); \
+		}(__VA_ARGS__); \
+	} while (0)
 }  // namespace vizzy
 
 // Utilities

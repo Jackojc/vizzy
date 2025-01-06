@@ -3,6 +3,8 @@
 
 ### Dependencies
 - ccache
+- SDL2
+- Lua5.1
 
 ### Building
 ```sh
