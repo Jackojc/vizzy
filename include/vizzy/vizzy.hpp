@@ -19,10 +19,15 @@
 
 // Definitions
 namespace vizzy {
-#define VIZZY_EXE           "Vizzy"
+#define VIZZY_EXE "Vizzy"
+
 #define VIZZY_WINDOW_WIDTH  800
 #define VIZZY_WINDOW_HEIGHT 600
-}
+
+// Bindings were generated as 4.3 core
+#define VIZZY_OPENGL_VERSION_MAJOR 4
+#define VIZZY_OPENGL_VERSION_MINOR 3
+}  // namespace vizzy
 
 // Macros
 namespace vizzy {
@@ -353,4 +358,51 @@ namespace vizzy {
 		return ((std::forward<T>(first) != std::forward<Ts>(rest)) and ...);
 	}
 }  // namespace vizzy
+
+// IO
+namespace vizzy {
+
+	inline std::string read_file(std::filesystem::path path) {
+		try {
+			std::filesystem::path cur = path;
+
+			while (std::filesystem::is_symlink(cur)) {
+				std::filesystem::path tmp = std::filesystem::read_symlink(cur);
+
+				if (tmp == cur) {
+					die("symlink '{}' resolves to itself", path.string());
+				}
+
+				cur = tmp;
+			}
+
+			if (std::filesystem::is_directory(cur) or std::filesystem::is_other(cur)) {
+				die("'{}' is not a file", path.string());
+			}
+
+			if (not std::filesystem::exists(cur)) {
+				die("file '{}' not found", path.string());
+			}
+
+			std::ifstream is(cur);
+
+			if (not is.is_open()) {
+				die("cannot read '{}'", path.string());
+			}
+
+			std::stringstream ss;
+			ss << is.rdbuf();
+
+			return ss.str();
+		}
+
+		catch (const std::filesystem::filesystem_error&) {
+			die("cannot read '{}'", path.string());
+		}
+
+		die("unknown error when trying to read '{}'", path.string());
+	}
+
+}  // namespace vizzy
+
 #endif

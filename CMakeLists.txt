@@ -12,6 +12,7 @@ find_package(SDL2 REQUIRED)
 find_package(Lua51 REQUIRED)
 
 add_executable(${PROJECT_NAME} src/vizzy.cpp src/glad.c)
+
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_20)
 target_compile_options(vizzy PRIVATE -Wall -Wextra -Wpedantic)
 
@@ -28,6 +29,7 @@ target_include_directories(${PROJECT_NAME} PUBLIC deps/sol2/include)
 target_include_directories(${PROJECT_NAME} PUBLIC include)
 
 target_link_libraries(${PROJECT_NAME} PRIVATE ${LUA_LIBRARIES})
+target_link_libraries(${PROJECT_NAME} PRIVATE ${SDL2_LIBRARIES})
 
 add_subdirectory(deps/libremidi/)
 target_link_libraries(${PROJECT_NAME} PRIVATE libremidi)
