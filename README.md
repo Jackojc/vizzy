@@ -2,7 +2,9 @@
 > MIDI visualisation framework.
 
 ### Dependencies
+- CMake
 - ccache
+- Ninja
 - SDL2
 - Lua5.1
 
