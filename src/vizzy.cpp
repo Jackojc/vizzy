@@ -37,6 +37,56 @@ enum : uint64_t {
 	OPT_HELP = 1 << 0,
 };
 
+GLuint compile_shader(GLenum kind, std::vector<std::string_view> sources) {
+	GLuint shader = glCreateShader(kind);
+
+	// Setup vector of string pointers so we can interface with the C function.
+	std::vector<const GLchar*> sources_cstr;
+	std::transform(
+		sources.begin(), sources.end(), std::back_inserter(sources_cstr), std::mem_fn(&std::string_view::data));
+
+	// Since we have string_views to work with, we can't guarantee they're null-terminated so we pass an explicit length
+	// for each string_view.
+	std::vector<GLint> sources_lengths;
+	std::transform(
+		sources.begin(), sources.end(), std::back_inserter(sources_lengths), std::mem_fn(&std::string_view::size));
+
+	// Assemble many sources into single source.
+	glShaderSource(shader,
+		/* count = */ sources.size(),
+		/* string = */ sources_cstr.data(),
+		/* length = */ sources_lengths.data());
+
+	glCompileShader(shader);
+
+	// Check if compilation succeeded and get any potential info messages.
+	int ok = GL_FALSE;
+	glGetShaderiv(shader, GL_COMPILE_STATUS, &ok);
+
+	int length = 0;
+	glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &length);
+
+	std::string info;
+	info.resize(length, '\0');
+
+	glGetShaderInfoLog(shader, length, nullptr, info.data());
+
+	if (ok != GL_TRUE) {
+		vizzy::die("shader compilation failed! GL: {}", info);
+	}
+
+	// // Print final concatenated shader source.
+	// int src_length = 0;
+	// glGetShaderiv(shader, GL_SHADER_SOURCE_LENGTH, &src_length);
+
+	// std::string src;
+	// src.resize(src_length, '\0');
+
+	// glGetShaderSource(shader, src_length, nullptr, src.data());
+
+	return shader;
+}
+
 int main(int argc, const char* argv[]) {
 	try {
 		uint64_t flags;
@@ -81,7 +131,7 @@ int main(int argc, const char* argv[]) {
 		lua.open_libraries(sol::lib::base, sol::lib::coroutine, sol::lib::string, sol::lib::io);
 
 		std::string script = vizzy::read_file(filename);
-		lua.script(script);
+		// lua.script(script);
 
 		// Setup SDL
 		if (SDL_Init(SDL_INIT_EVERYTHING) != 0) {
@@ -102,16 +152,25 @@ int main(int argc, const char* argv[]) {
 			VIZZY_WINDOW_HEIGHT,
 			SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
 
-		if (!window) {
+		if (window == nullptr) {
 			vizzy::die("SDL_CreateWindow failed! SDL: {}", SDL_GetError());
 		}
 
 		// Setup OpenGL
 		SDL_GLContext ogl = SDL_GL_CreateContext(window);
 
-		if (!gladLoadGLLoader((GLADloadproc)SDL_GL_GetProcAddress)) {
+		if (gladLoadGLLoader((GLADloadproc)SDL_GL_GetProcAddress) == 0) {
 			vizzy::die("gladLoadGLLoader failed!");
 		}
+
+		compile_shader(GL_FRAGMENT_SHADER,
+			{
+				"#version 330 core\n",
+				"in vec3 colour_out;\n",
+				"out vec4 colour;\n",
+			});
+
+		VIZZY_DIE("foo");
 
 		// Event loop
 		SDL_Event ev;
@@ -147,7 +206,7 @@ int main(int argc, const char* argv[]) {
 	}
 
 	catch (vizzy::Fatal e) {
-		fmt::print(std::cerr, fmt::runtime(e.what()));
+		std::cerr << e.what();
 		return EXIT_FAILURE;
 	}
 

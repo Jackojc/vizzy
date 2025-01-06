@@ -306,8 +306,8 @@ namespace vizzy {
 	[[noreturn]] inline void die(T&& arg, Ts&&... args) {
 		std::stringstream ss;
 
-		if constexpr (std::is_same_v<T, vizzy::LogInfo>) {
-			vizzy::log(ss, LogKind::Error, std::forward<T>(arg), std::forward<Ts>(args)...);
+		if constexpr (std::is_same_v<T, LogInfo>) {
+			vizzy::log(ss, LogKind::Error, arg, std::forward<Ts>(args)...);
 		}
 
 		else {
