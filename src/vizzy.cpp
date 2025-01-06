@@ -37,8 +37,12 @@ enum : uint64_t {
 	OPT_HELP = 1 << 0,
 };
 
-GLuint compile_shader(GLenum kind, std::vector<std::string_view> sources) {
+GLuint create_shader(GLenum kind, std::vector<std::string_view> sources) {
 	GLuint shader = glCreateShader(kind);
+
+	if (shader == 0) {
+		vizzy::die("glCreateShader failed!");
+	}
 
 	// Setup vector of string pointers so we can interface with the C function.
 	std::vector<const GLchar*> sources_cstr;
@@ -70,8 +74,10 @@ GLuint compile_shader(GLenum kind, std::vector<std::string_view> sources) {
 	info.resize(length, '\0');
 
 	glGetShaderInfoLog(shader, length, nullptr, info.data());
+	VIZZY_DEBUG("info = {}", info.empty() ? "<empty>" : info);
 
 	if (ok != GL_TRUE) {
+		glDeleteShader(shader);
 		vizzy::die("shader compilation failed! GL: {}", info);
 	}
 
@@ -85,6 +91,84 @@ GLuint compile_shader(GLenum kind, std::vector<std::string_view> sources) {
 	// glGetShaderSource(shader, src_length, nullptr, src.data());
 
 	return shader;
+}
+
+GLuint create_shader(GLenum kind, std::string_view source) {
+	return create_shader(kind, std::vector { source });
+}
+
+GLuint create_program(std::vector<GLuint> shaders) {
+	GLuint program = glCreateProgram();
+
+	if (program == 0) {
+		vizzy::die("glCreateProgram failed!");
+	}
+
+	for (GLuint shader: shaders) {
+		glAttachShader(program, shader);
+		glDeleteShader(shader);  // We attached it so it won't be freed until the program is.
+	}
+
+	glLinkProgram(program);
+
+	// Stats
+	int shader_count = 0;
+	int atomic_counter_buffers = 0;
+	int active_attributes = 0;
+	int active_uniforms = 0;
+	int binary_length = 0;
+
+	glGetProgramiv(program, GL_ATTACHED_SHADERS, &shader_count);
+	glGetProgramiv(program, GL_ACTIVE_ATOMIC_COUNTER_BUFFERS, &atomic_counter_buffers);
+	glGetProgramiv(program, GL_ACTIVE_ATTRIBUTES, &active_attributes);
+	glGetProgramiv(program, GL_ACTIVE_UNIFORMS, &active_uniforms);
+	glGetProgramiv(program, GL_PROGRAM_BINARY_LENGTH, &binary_length);
+
+	VIZZY_DEBUG("shader count = {}", shader_count);
+	VIZZY_DEBUG("atomic counter buffers = {}", atomic_counter_buffers);
+	VIZZY_DEBUG("active attributes = {}", active_attributes);
+	VIZZY_DEBUG("active uniforms = {}", active_uniforms);
+	VIZZY_DEBUG("binary length = {}", binary_length);
+
+	// Status
+	int ok = GL_FALSE;
+	glGetProgramiv(program, GL_LINK_STATUS, &ok);
+
+	int length = 0;
+	glGetProgramiv(program, GL_INFO_LOG_LENGTH, &length);
+
+	std::string info;
+	info.resize(length, '\0');
+
+	glGetProgramInfoLog(program, length, nullptr, info.data());
+	VIZZY_DEBUG("info = {}", info.empty() ? "<empty>" : info);
+
+	if (ok != GL_TRUE) {
+		glDeleteProgram(program);
+		vizzy::die("shader linking failed! GL: {}", info);
+	}
+
+	// Validation
+	glValidateProgram(program);
+
+	int valid = GL_FALSE;
+	glGetProgramiv(program, GL_VALIDATE_STATUS, &valid);
+
+	int validation_length = 0;
+	glGetProgramiv(program, GL_INFO_LOG_LENGTH, &validation_length);
+
+	std::string validation;
+	validation.resize(length, '\0');
+
+	glGetProgramInfoLog(program, validation_length, nullptr, validation.data());
+	VIZZY_DEBUG("validation = {}", validation.empty() ? "<empty>" : validation);
+
+	if (ok != GL_TRUE) {
+		glDeleteProgram(program);
+		vizzy::die("validation failed! GL: {}", validation);
+	}
+
+	return program;
 }
 
 int main(int argc, const char* argv[]) {
@@ -106,12 +190,12 @@ int main(int argc, const char* argv[]) {
 				vizzy::die("invalid option '{}'", status.what1);
 			}
 
-			case conflict::error::invalid_argument: {
-				vizzy::die("invalid argument '{}' for '{}'", status.what1, status.what2);
-			}
-
 			case conflict::error::missing_argument: {
 				vizzy::die("missing argument '{}'", status.what1);
+			}
+
+			case conflict::error::invalid_argument: {
+				vizzy::die("invalid argument '{}' for '{}'", status.what1, status.what2);
 			}
 
 			case conflict::error::ok: break;
@@ -163,14 +247,65 @@ int main(int argc, const char* argv[]) {
 			vizzy::die("gladLoadGLLoader failed!");
 		}
 
-		compile_shader(GL_FRAGMENT_SHADER,
-			{
-				"#version 330 core\n",
-				"in vec3 colour_out;\n",
-				"out vec4 colour;\n",
-			});
+		auto fs = create_shader(GL_FRAGMENT_SHADER,
+			"#version 330 core\n"
+			"in vec3 colour_out;\n"
+			"out vec4 colour;\n"
+			"void main() {\n"
+			"    colour = vec4(colour_out, 1.0);\n"
+			"}\n");
 
-		VIZZY_DIE("foo");
+		auto vs = create_shader(GL_VERTEX_SHADER,
+			"#version 330 core\n"
+			"in vec2 position;\n"
+			"in vec3 colour_in;\n"
+			"out vec3 colour_out;\n"
+			"void main() {\n"
+			"gl_Position = vec4(position, 0.0, 1.0);\n"
+			"colour_out = colour_in;\n"
+			"}\n");
+
+		auto program = create_program(std::vector { vs, fs });
+
+		glUseProgram(program);
+
+		// Triangle
+		struct Vertex {
+			vec2s pos;
+			vec3s col;
+		};
+
+		std::array vertices = {
+			Vertex { { { 0.0f, 0.5f } },     // Vertex 1 (X, Y)
+				{ { 1.0f, 0.0f, 0.0f } } },  // Vertex 1 (R, G, B)
+
+			Vertex { { { 0.5f, -0.5f } },    // Vertex 2 (X, Y)
+				{ { 0.0f, 1.0f, 0.0f } } },  // Vertex 2 (R, G, B)
+
+			Vertex { { { -0.5f, -0.5f } },   // Vertex 3 (X, Y)
+				{ { 0.0f, 0.0f, 1.0f } } },  // Vertex 3 (R, G, B)
+		};
+
+		GLuint vao;
+		GLuint vbo;
+
+		glGenBuffers(1, &vbo);
+
+		glBindBuffer(GL_ARRAY_BUFFER, vbo);
+		glBufferData(GL_ARRAY_BUFFER, vertices.size(), vertices.data(), GL_STATIC_DRAW);
+
+		glGenVertexArrays(1, &vao);
+		glBindVertexArray(vao);
+
+		GLint pa = glGetAttribLocation(program, "position");
+		glVertexAttribPointer(pa, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, pos));
+
+		glEnableVertexAttribArray(pa);
+
+		GLint ca = glGetAttribLocation(program, "colour_in");
+		glVertexAttribPointer(ca, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, col));
+
+		glEnableVertexAttribArray(ca);
 
 		// Event loop
 		SDL_Event ev;
@@ -192,13 +327,17 @@ int main(int argc, const char* argv[]) {
 				}
 			}
 
-			glClearColor(1.f, 0.f, 1.f, 1.f);
+			glClearColor(0, 0, 0, 1);
 			glClear(GL_COLOR_BUFFER_BIT);
+
+			glDrawArrays(GL_TRIANGLES, 0, 3);
 
 			SDL_GL_SwapWindow(window);
 		}
 
 		// Cleanup
+		glDeleteProgram(program);
+
 		SDL_DestroyWindow(window);
 		SDL_GL_DeleteContext(ogl);
 
