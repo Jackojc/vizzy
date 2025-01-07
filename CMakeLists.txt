@@ -5,13 +5,14 @@ project(vizzy
 	VERSION 1.0
 	DESCRIPTION "MIDI Visualiser")
 
-set(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/deps/sanitizers-cmake/cmake" ${CMAKE_MODULE_PATH})
+set(GLAD_SOURCES_DIR "${PROJECT_SOURCE_DIR}/deps/glad/")
+set(CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/deps/sanitizers-cmake/cmake" ${CMAKE_MODULE_PATH})
 
 find_package(Sanitizers)
 find_package(SDL2 REQUIRED)
 find_package(Lua51 REQUIRED)
 
-add_executable(${PROJECT_NAME} src/vizzy.cpp src/glad.c)
+add_executable(${PROJECT_NAME} src/vizzy.cpp)
 
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_20)
 target_compile_options(vizzy PRIVATE -Wall -Wextra -Wpedantic)
@@ -39,3 +40,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE fmt)
 
 add_subdirectory(deps/sol2/)
 target_link_libraries(${PROJECT_NAME} PRIVATE sol2)
+
+add_subdirectory("${GLAD_SOURCES_DIR}/cmake" glad_cmake)
+glad_add_library(glad REPRODUCIBLE API gl:core=4.6)
+target_link_libraries(${PROJECT_NAME} PRIVATE glad)

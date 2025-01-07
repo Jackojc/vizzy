@@ -6,7 +6,8 @@
 - ccache
 - Ninja
 - SDL2
-- Lua5.1
+- Lua5.1 (for Sol2)
+- python3-Jinja2 (for GLAD)
 
 ### Building
 ```sh
