@@ -21,13 +21,19 @@
 namespace vizzy {
 #define VIZZY_EXE "Vizzy"
 
-#define VIZZY_WINDOW_WIDTH  800
-#define VIZZY_WINDOW_HEIGHT 600
+#define VIZZY_WINDOW_WIDTH  1280
+#define VIZZY_WINDOW_HEIGHT 720
 
 // Bindings were generated as 4.3 core
 #define VIZZY_OPENGL_VERSION_MAJOR 4
 #define VIZZY_OPENGL_VERSION_MINOR 3
 }  // namespace vizzy
+
+// Concepts
+namespace vizzy {
+	template <typename T, typename U>
+	concept Same = std::is_same_v<T, U>;
+}
 
 // Macros
 namespace vizzy {
@@ -356,6 +362,20 @@ namespace vizzy {
 	template <typename T, typename... Ts>
 	[[nodiscard]] constexpr bool eq_none(T&& first, Ts&&... rest) {
 		return ((std::forward<T>(first) != std::forward<Ts>(rest)) and ...);
+	}
+
+	inline std::string_view trim(std::string_view s) {
+		auto it = s.begin();
+		while (it != s.end() and isspace(*it)) {
+			++it;
+		}
+
+		auto rit = s.rbegin();
+		while (rit != s.rend() and isspace(*rit)) {
+			++rit;
+		}
+
+		return { it, rit.base() };
 	}
 }  // namespace vizzy
 

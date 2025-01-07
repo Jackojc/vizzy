@@ -1,16 +1,10 @@
+#include <type_traits>
 #include <iostream>
-#include <sstream>
-#include <fstream>
+#include <filesystem>
 #include <string>
 #include <string_view>
 #include <vector>
-#include <map>
 #include <array>
-#include <chrono>
-#include <thread>
-#include <filesystem>
-#include <memory>
-#include <algorithm>
 
 #include <libremidi/libremidi.hpp>
 #include <libremidi/reader.hpp>
@@ -23,7 +17,7 @@
 #include <fmt/color.h>
 #include <fmt/ostream.h>
 
-#include <glad/glad.h>
+#include <glad/gl.h>
 #include <cglm/struct.h>
 
 #define SOL_ALL_SAFETIES_ON 1
@@ -33,145 +27,156 @@
 
 #include <vizzy/vizzy.hpp>
 
-enum : uint64_t {
-	OPT_HELP = 1 << 0,
-};
-
-GLuint create_shader(GLenum kind, std::vector<std::string_view> sources) {
-	GLuint shader = glCreateShader(kind);
-
-	if (shader == 0) {
-		vizzy::die("glCreateShader failed!");
+[[nodiscard]] inline std::string_view ogl_error_to_str(GLenum e) {
+	switch (e) {
+		case GL_INVALID_ENUM: return "GL_INVALID_ENUM";
+		case GL_INVALID_VALUE: return "GL_INVALID_VALUE";
+		case GL_INVALID_OPERATION: return "GL_INVALID_OPERATION";
+		case GL_INVALID_FRAMEBUFFER_OPERATION: return "GL_INVALID_FRAMEBUFFER_OPERATION";
+		case GL_OUT_OF_MEMORY: return "GL_OUT_OF_MEMORY";
+		case GL_STACK_UNDERFLOW: return "GL_STACK_UNDERFLOW";
+		case GL_STACK_OVERFLOW: return "GL_STACK_OVERFLOW";
 	}
 
-	// Setup vector of string pointers so we can interface with the C function.
-	std::vector<const GLchar*> sources_cstr;
-	std::transform(
-		sources.begin(), sources.end(), std::back_inserter(sources_cstr), std::mem_fn(&std::string_view::data));
-
-	// Since we have string_views to work with, we can't guarantee they're null-terminated so we pass an explicit length
-	// for each string_view.
-	std::vector<GLint> sources_lengths;
-	std::transform(
-		sources.begin(), sources.end(), std::back_inserter(sources_lengths), std::mem_fn(&std::string_view::size));
-
-	// Assemble many sources into single source.
-	glShaderSource(shader,
-		/* count = */ sources.size(),
-		/* string = */ sources_cstr.data(),
-		/* length = */ sources_lengths.data());
-
-	glCompileShader(shader);
-
-	// Check if compilation succeeded and get any potential info messages.
-	int ok = GL_FALSE;
-	glGetShaderiv(shader, GL_COMPILE_STATUS, &ok);
-
-	int length = 0;
-	glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &length);
-
-	std::string info;
-	info.resize(length, '\0');
-
-	glGetShaderInfoLog(shader, length, nullptr, info.data());
-	VIZZY_DEBUG("info = {}", info.empty() ? "<empty>" : info);
-
-	if (ok != GL_TRUE) {
-		glDeleteShader(shader);
-		vizzy::die("shader compilation failed! GL: {}", info);
-	}
-
-	// // Print final concatenated shader source.
-	// int src_length = 0;
-	// glGetShaderiv(shader, GL_SHADER_SOURCE_LENGTH, &src_length);
-
-	// std::string src;
-	// src.resize(src_length, '\0');
-
-	// glGetShaderSource(shader, src_length, nullptr, src.data());
-
-	return shader;
+	return {};
 }
 
-GLuint create_shader(GLenum kind, std::string_view source) {
-	return create_shader(kind, std::vector { source });
+template <typename F, typename... Ts>
+[[nodiscard]] inline decltype(auto) gl_call(F&& fn, Ts&&... args) {
+	decltype(auto) v = fn(std::forward<Ts>(args)...);
+
+	if (GLenum status = glGetError(); status != GL_NO_ERROR) {
+		vizzy::die("glGetError(): {}", ogl_error_to_str(status));
+	}
+
+	return v;
 }
 
-GLuint create_program(std::vector<GLuint> shaders) {
-	GLuint program = glCreateProgram();
+template <typename F, typename... Ts>
+	requires std::same_as<std::invoke_result_t<F, Ts...>, void>
+inline void gl_call(F&& fn, Ts&&... args) {
+	fn(std::forward<Ts>(args)...);
 
-	if (program == 0) {
-		vizzy::die("glCreateProgram failed!");
+	if (GLenum status = glGetError(); status != GL_NO_ERROR) {
+		vizzy::die("glGetError(): {}", ogl_error_to_str(status));
 	}
+}
 
-	for (GLuint shader: shaders) {
-		glAttachShader(program, shader);
-		glDeleteShader(shader);  // We attached it so it won't be freed until the program is.
-	}
+[[nodiscard]] inline GLint gl_get_program(GLuint program, GLenum param) {
+	GLint v = 0;
 
-	glLinkProgram(program);
+	gl_call(glGetProgramiv,
+		program,
+		param,
+		&v);  // INFO: https://registry.khronos.org/OpenGL-Refpages/gl4/html/glGetProgram.xhtml
 
-	// Stats
-	int shader_count = 0;
-	int atomic_counter_buffers = 0;
-	int active_attributes = 0;
-	int active_uniforms = 0;
-	int binary_length = 0;
+	return v;
+}
 
-	glGetProgramiv(program, GL_ATTACHED_SHADERS, &shader_count);
-	glGetProgramiv(program, GL_ACTIVE_ATOMIC_COUNTER_BUFFERS, &atomic_counter_buffers);
-	glGetProgramiv(program, GL_ACTIVE_ATTRIBUTES, &active_attributes);
-	glGetProgramiv(program, GL_ACTIVE_UNIFORMS, &active_uniforms);
-	glGetProgramiv(program, GL_PROGRAM_BINARY_LENGTH, &binary_length);
+[[nodiscard]] inline GLint gl_get_shader(GLuint shader, GLenum param) {
+	GLint v = 0;
 
-	VIZZY_DEBUG("shader count = {}", shader_count);
-	VIZZY_DEBUG("atomic counter buffers = {}", atomic_counter_buffers);
-	VIZZY_DEBUG("active attributes = {}", active_attributes);
-	VIZZY_DEBUG("active uniforms = {}", active_uniforms);
-	VIZZY_DEBUG("binary length = {}", binary_length);
+	gl_call(glGetShaderiv,
+		shader,
+		param,
+		&v);  // INFO: https://registry.khronos.org/OpenGL-Refpages/gl4/html/glGetShader.xhtml
 
-	// Status
-	int ok = GL_FALSE;
-	glGetProgramiv(program, GL_LINK_STATUS, &ok);
+	return v;
+}
 
-	int length = 0;
-	glGetProgramiv(program, GL_INFO_LOG_LENGTH, &length);
+[[nodiscard]] inline GLuint create_shader_program(GLenum kind, vizzy::Same<std::string_view> auto&&... sv) {
+	// INFO: https://registry.khronos.org/OpenGL-Refpages/gl4/html/glCreateShaderProgram.xhtml
+
+	VIZZY_TRACE(kind);
+
+	std::vector<const GLchar*> sources = { (sv.data(), ...) };
+	GLuint program = gl_call(glCreateShaderProgramv, kind, sources.size(), sources.data());
+
+	int ok = gl_get_program(program, GL_LINK_STATUS);
+	int info_length = gl_get_program(program, GL_INFO_LOG_LENGTH);
+	int binary_length = gl_get_program(program, GL_PROGRAM_BINARY_LENGTH);
 
 	std::string info;
-	info.resize(length, '\0');
+	info.resize(info_length, '\0');
 
-	glGetProgramInfoLog(program, length, nullptr, info.data());
-	VIZZY_DEBUG("info = {}", info.empty() ? "<empty>" : info);
+	glGetProgramInfoLog(program, info_length, nullptr, info.data());
+
+	VIZZY_DEBUG("ok = {}", ok ? "true" : "false");
+	VIZZY_DEBUG("info = '{}'", info.empty() ? "<empty>" : vizzy::trim(info));
+	VIZZY_DEBUG("binary length = {}b", binary_length);
 
 	if (ok != GL_TRUE) {
 		glDeleteProgram(program);
-		vizzy::die("shader linking failed! GL: {}", info);
+		vizzy::die("program compilation failed! GL: {}", vizzy::trim(info));
 	}
 
 	// Validation
 	glValidateProgram(program);
 
-	int valid = GL_FALSE;
-	glGetProgramiv(program, GL_VALIDATE_STATUS, &valid);
-
-	int validation_length = 0;
-	glGetProgramiv(program, GL_INFO_LOG_LENGTH, &validation_length);
+	int valid = gl_get_program(program, GL_VALIDATE_STATUS);
+	int validation_length = gl_get_program(program, GL_INFO_LOG_LENGTH);
 
 	std::string validation;
-	validation.resize(length, '\0');
+	validation.resize(validation_length, '\0');
 
 	glGetProgramInfoLog(program, validation_length, nullptr, validation.data());
-	VIZZY_DEBUG("validation = {}", validation.empty() ? "<empty>" : validation);
 
-	if (ok != GL_TRUE) {
+	VIZZY_DEBUG("valid = {}", valid ? "true" : "false");
+	VIZZY_DEBUG("validation = '{}'", validation.empty() ? "<empty>" : vizzy::trim(validation));
+
+	if (valid != GL_TRUE) {
 		glDeleteProgram(program);
-		vizzy::die("validation failed! GL: {}", validation);
+		vizzy::die("program validation failed! GL: {}", vizzy::trim(validation));
 	}
 
 	return program;
 }
 
+// TODO: Rework this function to take an array of pairs mapping GLbitfield to programs.
+// It turns out it's fine to have multiple shaders present in a program when using seperable
+// programs.
+// Because of this, it might be better to go back to the old implementation for create_shader_program
+// where we explicitly do compilation and linking since it would allow us to compile mixed programs with
+// more than one stage.
+[[nodiscard]] inline GLuint create_program_pipeline(GLenum kind, vizzy::Same<GLuint> auto&&... programs) {
+	// INFO: https://www.khronos.org/opengl/wiki/Shader_Compilation#Separate_programs
+
+	GLuint pipeline;
+	glGenProgramPipelines(1, &pipeline);
+
+	constexpr auto fn = [&](GLuint program) {
+		// 1. Get shader from program
+		// 2. Get shader _type_
+		// 3. glUseProgramStages with shader type
+
+		int shaders_length = gl_get_program(program, GL_ATTACHED_SHADERS);
+
+		// TODO: Is it possible to have a seperable program with multiple shaders
+		// in it? If not, we need to check how many are attached and error if it's more than one.
+
+		// std::vector<GLuint> shaders;
+		// shaders.resize(shaders_length, 0);
+
+		// glGetAttachedShaders(program, shaders_length, nullptr, shaders.data());
+
+		std::vector<GLuint> shaders;
+		shaders.resize(shaders_length, 0);
+
+		glGetAttachedShaders(program, shaders_length, nullptr, shaders.data());
+	};
+
+	(fn(programs), ...);
+
+	return pipeline;
+}
+
+enum : uint64_t {
+	OPT_HELP = 1 << 0,
+};
+
 int main(int argc, const char* argv[]) {
+	using namespace std::literals;
+
 	try {
 		uint64_t flags;
 		std::string_view filename;
@@ -241,33 +246,54 @@ int main(int argc, const char* argv[]) {
 		}
 
 		// Setup OpenGL
-		SDL_GLContext ogl = SDL_GL_CreateContext(window);
+		SDL_GLContext gl = SDL_GL_CreateContext(window);
 
-		if (gladLoadGLLoader((GLADloadproc)SDL_GL_GetProcAddress) == 0) {
+		int gl_version = gladLoadGL((GLADloadfunc)SDL_GL_GetProcAddress);
+
+		if (gl_version == 0) {
 			vizzy::die("gladLoadGLLoader failed!");
 		}
 
-		auto fs = create_shader(GL_FRAGMENT_SHADER,
-			"#version 330 core\n"
-			"in vec3 colour_out;\n"
-			"out vec4 colour;\n"
-			"void main() {\n"
-			"    colour = vec4(colour_out, 1.0);\n"
-			"}\n");
+		std::cout << "Loaded OpenGL " << GLAD_VERSION_MAJOR(gl_version) << "." << GLAD_VERSION_MINOR(gl_version)
+				  << std::endl;
 
-		auto vs = create_shader(GL_VERTEX_SHADER,
-			"#version 330 core\n"
-			"in vec2 position;\n"
-			"in vec3 colour_in;\n"
-			"out vec3 colour_out;\n"
-			"void main() {\n"
-			"gl_Position = vec4(position, 0.0, 1.0);\n"
-			"colour_out = colour_in;\n"
-			"}\n");
+		auto frag = create_shader_program(GL_FRAGMENT_SHADER, R"(
+			#version 330 core
 
-		auto program = create_program(std::vector { vs, fs });
+			in vec3 colour_out;
+			out vec4 colour;
 
-		glUseProgram(program);
+			void main() {
+			    colour = vec4(colour_out, 1.0);
+			}
+		)"sv);
+
+		auto vert = create_shader_program(GL_VERTEX_SHADER, R"(
+			#version 330 core
+
+			in vec2 position;
+			in vec3 colour_in;
+
+			out vec3 colour_out;
+
+			void main() {
+				gl_Position = vec4(position, 0.0, 1.0);
+				colour_out = colour_in;
+			}
+		)"sv);
+
+		GLuint pipeline;
+		glGenProgramPipelines(1, &pipeline);
+
+		glUseProgramStages(pipeline, GL_VERTEX_SHADER_BIT, vert);
+		glUseProgramStages(pipeline, GL_FRAGMENT_SHADER_BIT, frag);
+
+		// GLint colour_location = glGetUniformLocation(frag, "colour");
+		// glProgramUniform4f(frag, colour_location, 1.f, 0.f, 0.f, 1.f);
+
+		glBindProgramPipeline(pipeline);
+
+		// VIZZY_DIE("fail");
 
 		// Triangle
 		struct Vertex {
@@ -290,21 +316,21 @@ int main(int argc, const char* argv[]) {
 		GLuint vbo;
 
 		glGenBuffers(1, &vbo);
-
 		glBindBuffer(GL_ARRAY_BUFFER, vbo);
-		glBufferData(GL_ARRAY_BUFFER, vertices.size(), vertices.data(), GL_STATIC_DRAW);
 
 		glGenVertexArrays(1, &vao);
 		glBindVertexArray(vao);
 
-		GLint pa = glGetAttribLocation(program, "position");
+		glBufferData(
+			GL_ARRAY_BUFFER, vertices.size() * sizeof(decltype(vertices)::value_type), vertices.data(), GL_STATIC_DRAW);
+
+		GLint pa = glGetAttribLocation(vert, "position");
 		glVertexAttribPointer(pa, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, pos));
 
-		glEnableVertexAttribArray(pa);
-
-		GLint ca = glGetAttribLocation(program, "colour_in");
+		GLint ca = glGetAttribLocation(vert, "colour_in");
 		glVertexAttribPointer(ca, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, col));
 
+		glEnableVertexAttribArray(pa);
 		glEnableVertexAttribArray(ca);
 
 		// Event loop
@@ -336,10 +362,13 @@ int main(int argc, const char* argv[]) {
 		}
 
 		// Cleanup
-		glDeleteProgram(program);
+		glDeleteProgramPipelines(1, &pipeline);
+
+		glDeleteProgram(frag);
+		glDeleteProgram(vert);
 
 		SDL_DestroyWindow(window);
-		SDL_GL_DeleteContext(ogl);
+		SDL_GL_DeleteContext(gl);
 
 		SDL_Quit();
 	}
