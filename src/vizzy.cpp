@@ -27,8 +27,8 @@
 
 #include <vizzy/vizzy.hpp>
 
-[[nodiscard]] inline std::string_view ogl_error_to_str(GLenum e) {
-	switch (e) {
+[[nodiscard]] inline std::string_view ogl_error_to_str(GLenum error) {
+	switch (error) {
 		case GL_INVALID_ENUM: return "GL_INVALID_ENUM";
 		case GL_INVALID_VALUE: return "GL_INVALID_VALUE";
 		case GL_INVALID_OPERATION: return "GL_INVALID_OPERATION";
@@ -38,7 +38,20 @@
 		case GL_STACK_OVERFLOW: return "GL_STACK_OVERFLOW";
 	}
 
-	return {};
+	vizzy::die("unknown error type");  // TODO: Implement unreachable macro
+}
+
+[[nodiscard]] inline GLbitfield ogl_shader_type_to_bitfield(GLint kind) {
+	switch (kind) {
+		case GL_COMPUTE_SHADER: return GL_COMPUTE_SHADER_BIT;
+		case GL_VERTEX_SHADER: return GL_VERTEX_SHADER_BIT;
+		case GL_TESS_CONTROL_SHADER: return GL_TESS_CONTROL_SHADER_BIT;
+		case GL_TESS_EVALUATION_SHADER: return GL_TESS_EVALUATION_SHADER_BIT;
+		case GL_GEOMETRY_SHADER: return GL_GEOMETRY_SHADER_BIT;
+		case GL_FRAGMENT_SHADER: return GL_FRAGMENT_SHADER_BIT;
+	}
+
+	vizzy::die("unknown shader type");  // TODO: Implement unreachable macro
 }
 
 template <typename F, typename... Ts>
@@ -201,32 +214,35 @@ inline void gl_call(F&& fn, Ts&&... args) {
 		gl_call(glUseProgramStages, pipeline, stage, program);
 	}
 
-	// constexpr auto fn = [&](GLuint program) {
-	// 	// 1. Get shader from program
-	// 	// 2. Get shader _type_
-	// 	// 3. glUseProgramStages with shader type
-
-	// 	int shaders_length = gl_get_program(program, GL_ATTACHED_SHADERS);
-
-	// 	// TODO: Is it possible to have a seperable program with multiple shaders
-	// 	// in it? If not, we need to check how many are attached and error if it's more than one.
-
-	// 	// std::vector<GLuint> shaders;
-	// 	// shaders.resize(shaders_length, 0);
-
-	// 	// glGetAttachedShaders(program, shaders_length, nullptr, shaders.data());
-
-	// 	std::vector<GLuint> shaders;
-	// 	shaders.resize(shaders_length, 0);
-
-	// 	glGetAttachedShaders(program, shaders_length, nullptr, shaders.data());
-	// };
-
-	// (fn(programs), ...);
-
 	VIZZY_OKAY("successfully generated pipeline ({})", pipeline);
 
 	return pipeline;
+}
+
+[[nodiscard]] inline GLuint create_pipeline(std::vector<GLuint> programs) {
+	// INFO: https://www.khronos.org/opengl/wiki/Shader_Compilation#Separate_programs
+
+	std::vector<std::pair<GLbitfield, GLuint>> program_stages;
+
+	for (auto program: programs) {
+		int shaders_length = gl_get_program(program, GL_ATTACHED_SHADERS);
+
+		std::vector<GLuint> shaders;
+		shaders.resize(shaders_length, 0);
+
+		gl_call(glGetAttachedShaders, program, shaders_length, nullptr, shaders.data());
+
+		GLbitfield stages = 0;
+
+		for (auto shader: shaders) {
+			int kind = gl_get_shader(shader, GL_SHADER_TYPE);
+			stages &= ogl_shader_type_to_bitfield(kind);
+		}
+
+		program_stages.emplace_back(stages, program);
+	}
+
+	return create_pipeline(program_stages);
 }
 
 enum : uint64_t {
