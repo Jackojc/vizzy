@@ -84,8 +84,7 @@ inline void gl_call(F&& fn, Ts&&... args) {
 	return v;
 }
 
-template <std::convertible_to<std::string_view>... Ts>
-[[nodiscard]] inline GLuint create_shader(GLenum kind, Ts&&... sv) {
+[[nodiscard]] inline GLuint create_shader(GLenum kind, std::vector<std::string_view> sv) {
 	VIZZY_FUNCTION();
 
 	GLuint shader = gl_call(glCreateShader, kind);
@@ -94,7 +93,8 @@ template <std::convertible_to<std::string_view>... Ts>
 		vizzy::die("glCreateShader failed!");
 	}
 
-	std::vector<const GLchar*> sources = { (sv.data(), ...) };
+	std::vector<const GLchar*> sources;
+	std::transform(sv.begin(), sv.end(), std::back_inserter(sources), std::mem_fn(&decltype(sv)::value_type::data));
 
 	gl_call(glShaderSource, shader, sources.size(), sources.data(), nullptr);
 	gl_call(glCompileShader, shader);
@@ -120,8 +120,7 @@ template <std::convertible_to<std::string_view>... Ts>
 	return shader;
 }
 
-template <std::convertible_to<GLuint>... Ts>
-[[nodiscard]] inline GLuint create_program(Ts&&... shaders) {
+[[nodiscard]] inline GLuint create_program(std::vector<GLuint> shaders) {
 	VIZZY_FUNCTION();
 
 	GLuint program = gl_call(glCreateProgram);
@@ -132,8 +131,10 @@ template <std::convertible_to<GLuint>... Ts>
 	}
 
 	// Linking
-	(gl_call(glAttachShader, program, shaders), ...);
-	(gl_call(glDeleteShader, shaders), ...);
+	for (auto shader: shaders) {
+		gl_call(glAttachShader, program, shader);
+		gl_call(glDeleteShader, shader);
+	}
 
 	gl_call(glLinkProgram, program);
 
@@ -181,22 +182,12 @@ template <std::convertible_to<GLuint>... Ts>
 	return program;
 }
 
-template <std::convertible_to<std::string_view>... Ts>
-[[nodiscard]] inline GLuint create_shader_program(GLenum kind, Ts&&... sv) {
+[[nodiscard]] inline GLuint create_shader_program(GLenum kind, std::vector<std::string_view> sv) {
 	VIZZY_FUNCTION();
-	return create_program(create_shader(kind, std::forward<Ts>(sv)...));
+	return create_program({ create_shader(kind, sv) });
 }
 
-// TODO: Rework this function to take an array of pairs mapping GLbitfield to programs.
-// It turns out it's fine to have multiple shaders present in a program when using seperable
-// programs.
-// Because of this, it might be better to go back to the old implementation for create_shader_program
-// where we explicitly do compilation and linking since it would allow us to compile mixed programs with
-// more than one stage.
-// using PipelineArg = std::pair<GLbitfield, GLuint>;
-
-// template <std::convertible_to<PipelineArg>... Ts>
-[[nodiscard]] inline GLuint create_pipeline(std::vector<std::pair<GLbitfield, GLenum>> programs) {
+[[nodiscard]] inline GLuint create_pipeline(std::vector<std::pair<GLbitfield, GLuint>> programs) {
 	// INFO: https://www.khronos.org/opengl/wiki/Shader_Compilation#Separate_programs
 
 	VIZZY_FUNCTION();
@@ -323,7 +314,7 @@ int main(int argc, const char* argv[]) {
 
 		VIZZY_DEBUG("OpenGL version: {}.{}", GLAD_VERSION_MAJOR(gl_version), GLAD_VERSION_MINOR(gl_version));
 
-		auto frag = create_shader_program(GL_FRAGMENT_SHADER, R"(
+		auto frag = create_shader_program(GL_FRAGMENT_SHADER, { R"(
 			#version 330 core
 
 			in vec3 colour_out;
@@ -332,9 +323,9 @@ int main(int argc, const char* argv[]) {
 			void main() {
 			    colour = vec4(colour_out, 1.0);
 			}
-		)"sv);
+		)"sv });
 
-		auto vert = create_shader_program(GL_VERTEX_SHADER, R"(
+		auto vert = create_shader_program(GL_VERTEX_SHADER, { R"(
 			#version 330 core
 
 			in vec2 position;
@@ -346,7 +337,7 @@ int main(int argc, const char* argv[]) {
 				gl_Position = vec4(position, 0.0, 1.0);
 				colour_out = colour_in;
 			}
-		)"sv);
+		)"sv });
 
 		auto pipeline = create_pipeline({
 			{ GL_VERTEX_SHADER_BIT, vert },
