@@ -84,34 +84,81 @@ inline void gl_call(F&& fn, Ts&&... args) {
 	return v;
 }
 
-[[nodiscard]] inline GLuint create_shader_program(GLenum kind, vizzy::Same<std::string_view> auto&&... sv) {
-	// INFO: https://registry.khronos.org/OpenGL-Refpages/gl4/html/glCreateShaderProgram.xhtml
+template <std::convertible_to<std::string_view>... Ts>
+[[nodiscard]] inline GLuint create_shader(GLenum kind, Ts&&... sv) {
+	VIZZY_FUNCTION();
 
-	VIZZY_TRACE(kind);
+	GLuint shader = gl_call(glCreateShader, kind);
+
+	if (shader == 0) {
+		vizzy::die("glCreateShader failed!");
+	}
 
 	std::vector<const GLchar*> sources = { (sv.data(), ...) };
-	GLuint program = gl_call(glCreateShaderProgramv, kind, sources.size(), sources.data());
+
+	gl_call(glShaderSource, shader, sources.size(), sources.data(), nullptr);
+	gl_call(glCompileShader, shader);
+
+	int ok = gl_get_shader(shader, GL_COMPILE_STATUS);
+	int info_length = gl_get_shader(shader, GL_INFO_LOG_LENGTH);
+
+	std::string info;
+	info.resize(info_length, '\0');
+
+	gl_call(glGetShaderInfoLog, shader, info_length, nullptr, info.data());
+
+	VIZZY_DEBUG("ok = {}", ok ? "true" : "false");
+	VIZZY_DEBUG("info = '{}'", info.empty() ? "<empty>" : info);
+
+	if (ok != GL_TRUE) {
+		gl_call(glDeleteShader, shader);
+		vizzy::die("shader compilation failed! GL: {}", info);
+	}
+
+	VIZZY_OKAY("successfully compiled shader ({})", shader);
+
+	return shader;
+}
+
+template <std::convertible_to<GLuint>... Ts>
+[[nodiscard]] inline GLuint create_program(Ts&&... shaders) {
+	VIZZY_FUNCTION();
+
+	GLuint program = gl_call(glCreateProgram);
+	gl_call(glProgramParameteri, program, GL_PROGRAM_SEPARABLE, GL_TRUE);
+
+	if (program == 0) {
+		vizzy::die("glCreateProgram failed!");
+	}
+
+	// Linking
+	(gl_call(glAttachShader, program, shaders), ...);
+	(gl_call(glDeleteShader, shaders), ...);
+
+	gl_call(glLinkProgram, program);
 
 	int ok = gl_get_program(program, GL_LINK_STATUS);
 	int info_length = gl_get_program(program, GL_INFO_LOG_LENGTH);
+	int shader_count = gl_get_program(program, GL_ATTACHED_SHADERS);
 	int binary_length = gl_get_program(program, GL_PROGRAM_BINARY_LENGTH);
 
 	std::string info;
 	info.resize(info_length, '\0');
 
-	glGetProgramInfoLog(program, info_length, nullptr, info.data());
+	gl_call(glGetProgramInfoLog, program, info_length, nullptr, info.data());
 
 	VIZZY_DEBUG("ok = {}", ok ? "true" : "false");
-	VIZZY_DEBUG("info = '{}'", info.empty() ? "<empty>" : vizzy::trim(info));
+	VIZZY_DEBUG("info = '{}'", info.empty() ? "<empty>" : info);
 	VIZZY_DEBUG("binary length = {}b", binary_length);
+	VIZZY_DEBUG("shader count = {}", shader_count);
 
 	if (ok != GL_TRUE) {
-		glDeleteProgram(program);
-		vizzy::die("program compilation failed! GL: {}", vizzy::trim(info));
+		gl_call(glDeleteProgram, program);
+		vizzy::die("shader linking failed! GL: {}", info);
 	}
 
 	// Validation
-	glValidateProgram(program);
+	gl_call(glValidateProgram, program);
 
 	int valid = gl_get_program(program, GL_VALIDATE_STATUS);
 	int validation_length = gl_get_program(program, GL_INFO_LOG_LENGTH);
@@ -119,17 +166,25 @@ inline void gl_call(F&& fn, Ts&&... args) {
 	std::string validation;
 	validation.resize(validation_length, '\0');
 
-	glGetProgramInfoLog(program, validation_length, nullptr, validation.data());
+	gl_call(glGetProgramInfoLog, program, validation_length, nullptr, validation.data());
 
 	VIZZY_DEBUG("valid = {}", valid ? "true" : "false");
 	VIZZY_DEBUG("validation = '{}'", validation.empty() ? "<empty>" : vizzy::trim(validation));
 
 	if (valid != GL_TRUE) {
-		glDeleteProgram(program);
-		vizzy::die("program validation failed! GL: {}", vizzy::trim(validation));
+		gl_call(glDeleteProgram, program);
+		vizzy::die("validation failed! GL: {}", validation);
 	}
 
+	VIZZY_OKAY("successfully linked program ({})", program);
+
 	return program;
+}
+
+template <std::convertible_to<std::string_view>... Ts>
+[[nodiscard]] inline GLuint create_shader_program(GLenum kind, Ts&&... sv) {
+	VIZZY_FUNCTION();
+	return create_program(create_shader(kind, std::forward<Ts>(sv)...));
 }
 
 // TODO: Rework this function to take an array of pairs mapping GLbitfield to programs.
@@ -138,34 +193,47 @@ inline void gl_call(F&& fn, Ts&&... args) {
 // Because of this, it might be better to go back to the old implementation for create_shader_program
 // where we explicitly do compilation and linking since it would allow us to compile mixed programs with
 // more than one stage.
-[[nodiscard]] inline GLuint create_program_pipeline(GLenum kind, vizzy::Same<GLuint> auto&&... programs) {
+// using PipelineArg = std::pair<GLbitfield, GLuint>;
+
+// template <std::convertible_to<PipelineArg>... Ts>
+[[nodiscard]] inline GLuint create_pipeline(std::vector<std::pair<GLbitfield, GLenum>> programs) {
 	// INFO: https://www.khronos.org/opengl/wiki/Shader_Compilation#Separate_programs
+
+	VIZZY_FUNCTION();
+	VIZZY_DEBUG("program count = {}", programs.size());
 
 	GLuint pipeline;
 	glGenProgramPipelines(1, &pipeline);
 
-	constexpr auto fn = [&](GLuint program) {
-		// 1. Get shader from program
-		// 2. Get shader _type_
-		// 3. glUseProgramStages with shader type
+	for (auto [stage, program]: programs) {
+		VIZZY_DEBUG("stage = {:#b}, program = {}", stage, program);
+		gl_call(glUseProgramStages, pipeline, stage, program);
+	}
 
-		int shaders_length = gl_get_program(program, GL_ATTACHED_SHADERS);
+	// constexpr auto fn = [&](GLuint program) {
+	// 	// 1. Get shader from program
+	// 	// 2. Get shader _type_
+	// 	// 3. glUseProgramStages with shader type
 
-		// TODO: Is it possible to have a seperable program with multiple shaders
-		// in it? If not, we need to check how many are attached and error if it's more than one.
+	// 	int shaders_length = gl_get_program(program, GL_ATTACHED_SHADERS);
 
-		// std::vector<GLuint> shaders;
-		// shaders.resize(shaders_length, 0);
+	// 	// TODO: Is it possible to have a seperable program with multiple shaders
+	// 	// in it? If not, we need to check how many are attached and error if it's more than one.
 
-		// glGetAttachedShaders(program, shaders_length, nullptr, shaders.data());
+	// 	// std::vector<GLuint> shaders;
+	// 	// shaders.resize(shaders_length, 0);
 
-		std::vector<GLuint> shaders;
-		shaders.resize(shaders_length, 0);
+	// 	// glGetAttachedShaders(program, shaders_length, nullptr, shaders.data());
 
-		glGetAttachedShaders(program, shaders_length, nullptr, shaders.data());
-	};
+	// 	std::vector<GLuint> shaders;
+	// 	shaders.resize(shaders_length, 0);
 
-	(fn(programs), ...);
+	// 	glGetAttachedShaders(program, shaders_length, nullptr, shaders.data());
+	// };
+
+	// (fn(programs), ...);
+
+	VIZZY_OKAY("successfully generated pipeline ({})", pipeline);
 
 	return pipeline;
 }
@@ -249,13 +317,11 @@ int main(int argc, const char* argv[]) {
 		SDL_GLContext gl = SDL_GL_CreateContext(window);
 
 		int gl_version = gladLoadGL((GLADloadfunc)SDL_GL_GetProcAddress);
-
 		if (gl_version == 0) {
 			vizzy::die("gladLoadGLLoader failed!");
 		}
 
-		std::cout << "Loaded OpenGL " << GLAD_VERSION_MAJOR(gl_version) << "." << GLAD_VERSION_MINOR(gl_version)
-				  << std::endl;
+		VIZZY_DEBUG("OpenGL version: {}.{}", GLAD_VERSION_MAJOR(gl_version), GLAD_VERSION_MINOR(gl_version));
 
 		auto frag = create_shader_program(GL_FRAGMENT_SHADER, R"(
 			#version 330 core
@@ -282,18 +348,12 @@ int main(int argc, const char* argv[]) {
 			}
 		)"sv);
 
-		GLuint pipeline;
-		glGenProgramPipelines(1, &pipeline);
-
-		glUseProgramStages(pipeline, GL_VERTEX_SHADER_BIT, vert);
-		glUseProgramStages(pipeline, GL_FRAGMENT_SHADER_BIT, frag);
-
-		// GLint colour_location = glGetUniformLocation(frag, "colour");
-		// glProgramUniform4f(frag, colour_location, 1.f, 0.f, 0.f, 1.f);
+		auto pipeline = create_pipeline({
+			{ GL_VERTEX_SHADER_BIT, vert },
+			{ GL_FRAGMENT_SHADER_BIT, frag },
+		});
 
 		glBindProgramPipeline(pipeline);
-
-		// VIZZY_DIE("fail");
 
 		// Triangle
 		struct Vertex {
@@ -334,6 +394,8 @@ int main(int argc, const char* argv[]) {
 		glEnableVertexAttribArray(ca);
 
 		// Event loop
+		VIZZY_OKAY("loop");
+
 		SDL_Event ev;
 		while (true) {
 			if (SDL_PollEvent(&ev)) {
@@ -377,6 +439,8 @@ int main(int argc, const char* argv[]) {
 		std::cerr << e.what();
 		return EXIT_FAILURE;
 	}
+
+	VIZZY_OKAY("done");
 
 	return EXIT_SUCCESS;
 }

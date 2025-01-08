@@ -122,22 +122,24 @@ namespace vizzy {
 #define VIZZY_BG_WHITE_BRIGHT   "\x1b[107m"
 
 // Log colours
-#define VIZZY_COLOUR_DEBUG VIZZY_FG_CYAN_BRIGHT
-#define VIZZY_COLOUR_TRACE VIZZY_FG_MAGENTA_BRIGHT
-#define VIZZY_COLOUR_WARN  VIZZY_FG_BLUE
-#define VIZZY_COLOUR_ERROR VIZZY_FG_RED
-#define VIZZY_COLOUR_OKAY  VIZZY_FG_GREEN
-#define VIZZY_COLOUR_EXPR  VIZZY_FG_MAGENTA
-#define VIZZY_COLOUR_HERE  VIZZY_FG_YELLOW_BRIGHT
+#define VIZZY_COLOUR_DEBUG    VIZZY_FG_CYAN_BRIGHT
+#define VIZZY_COLOUR_TRACE    VIZZY_FG_MAGENTA_BRIGHT
+#define VIZZY_COLOUR_WARN     VIZZY_FG_BLUE
+#define VIZZY_COLOUR_ERROR    VIZZY_FG_RED
+#define VIZZY_COLOUR_OKAY     VIZZY_FG_GREEN
+#define VIZZY_COLOUR_EXPR     VIZZY_FG_MAGENTA
+#define VIZZY_COLOUR_HERE     VIZZY_FG_YELLOW_BRIGHT
+#define VIZZY_COLOUR_FUNCTION VIZZY_BG_BLUE VIZZY_FG_BLACK
 
 #define VIZZY_LOG_LEVELS \
-	X(Debug, "[.]", "debug", VIZZY_COLOUR_DEBUG) \
-	X(Trace, "[-]", "trace", VIZZY_COLOUR_TRACE) \
-	X(Warn, "[*]", "warning", VIZZY_COLOUR_WARN) \
-	X(Error, "[!]", "error", VIZZY_COLOUR_ERROR) \
-	X(Okay, "[^]", "okay", VIZZY_COLOUR_OKAY) \
-	X(Expr, "[=]", "expr", VIZZY_COLOUR_EXPR) \
-	X(Here, "[/]", "here", VIZZY_COLOUR_HERE)
+	X(Debug, ".", "debg", VIZZY_COLOUR_DEBUG) \
+	X(Trace, "-", "trce", VIZZY_COLOUR_TRACE) \
+	X(Warn, "*", "warn", VIZZY_COLOUR_WARN) \
+	X(Error, "!", "fail", VIZZY_COLOUR_ERROR) \
+	X(Okay, "^", "okay", VIZZY_COLOUR_OKAY) \
+	X(Expr, "=", "expr", VIZZY_COLOUR_EXPR) \
+	X(Here, "/", "here", VIZZY_COLOUR_HERE) \
+	X(Function, ">", "func", VIZZY_COLOUR_FUNCTION)
 
 #define X(x, y, z, w) x,
 	enum class LogKind {
@@ -208,23 +210,32 @@ namespace vizzy {
 
 	template <typename... Ts>
 	inline decltype(auto) log(std::ostream& os, LogKind kind, std::optional<LogInfo> info, Ts&&... args) {
-		fmt::print(os, "{}{}" VIZZY_RESET, vizzy::log_colour_to_str(kind), vizzy::log_to_str(kind));
+		auto colour = vizzy::log_colour_to_str(kind);
+		auto sigil = vizzy::log_to_str(kind);
+		auto human = vizzy::log_human_to_str(kind);
+
+		fmt::print(os,
+			"{}[{}]" VIZZY_RESET
+			" "
+			"{}[{}]" VIZZY_RESET " ",
+			colour,
+			sigil,
+			colour,
+			human);
 
 		if (info.has_value()) {
 			auto [file, line, func] = info.value();
 
-			fmt::print(os, " [{}:{}] ", std::filesystem::relative(file).native(), line);
+			std::string_view func_name = func == "operator()" ? "<lamba>" : func;
+			std::string_view separator = (sizeof...(Ts) > 0) ? VIZZY_FG_BLACK_BRIGHT "│" VIZZY_RESET : "";
 
-			// Don't print function name for lambdas (which is the call operator)
-			if (func != "operator()") {
-				fmt::print(os, "`{}`" VIZZY_RESET, func);
-			}
+			auto path = std::filesystem::relative(file).native();
+
+			fmt::print(os, "`" VIZZY_BOLD "{}" VIZZY_RESET "` " VIZZY_FG_BLACK_BRIGHT "│" VIZZY_RESET " ", func_name);
+			fmt::print(os, VIZZY_FG_BLACK_BRIGHT "({}:{})" VIZZY_RESET " {} ", path, line, separator);
 		}
 
-		fmt::print(os, " {}{}", vizzy::log_colour_to_str(kind), vizzy::log_human_to_str(kind));
-
 		if constexpr (sizeof...(Ts) > 0) {
-			fmt::print(os, ":" VIZZY_RESET " ");
 			detail::log_fmt(os, std::forward<Ts>(args)...);
 		}
 
@@ -242,19 +253,18 @@ namespace vizzy {
 			std::ostream& os, std::optional<LogInfo> info, std::string_view expr_str, T&& expr) {
 			log(os, LogKind::Expr, info, "{} = {}", expr_str, std::forward<T>(expr));
 			return std::forward<T>(expr);
-
-		}  // namespace detail
+		}
 	}
 
 // Log with file location info included.
 #define VIZZY_LOG(...) \
 	do { \
-		[VIZZY_VAR(func) = VIZZY_LOCATION_FUNC]<typename... Ts>( \
-			vizzy::LogKind VIZZY_VAR(kind), Ts&&... VIZZY_VAR(args)) { \
+		[VIZZY_VAR(func) = VIZZY_LOCATION_FUNC]<typename... VIZZY_VAR(Ts)>( \
+			vizzy::LogKind VIZZY_VAR(kind), VIZZY_VAR(Ts)&&... VIZZY_VAR(args)) { \
 			vizzy::log(std::cerr, \
 				VIZZY_VAR(kind), \
 				vizzy::LogInfo { VIZZY_LOCATION_FILE, VIZZY_LOCATION_LINE, VIZZY_VAR(func) }, \
-				std::forward<Ts>(VIZZY_VAR(args))...); \
+				std::forward<VIZZY_VAR(Ts)>(VIZZY_VAR(args))...); \
 		}(__VA_ARGS__); \
 	} while (0)
 
@@ -282,6 +292,11 @@ namespace vizzy {
 #define VIZZY_OKAY(...) \
 	do { \
 		VIZZY_LOG(vizzy::LogKind::Okay, __VA_ARGS__); \
+	} while (0)
+
+#define VIZZY_FUNCTION() \
+	do { \
+		VIZZY_LOG(vizzy::LogKind::Function); \
 	} while (0)
 
 // Evaluate expression and return its result while also printing both. (Useful for debugging something inside a complex
