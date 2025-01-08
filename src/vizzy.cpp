@@ -102,6 +102,8 @@ inline void gl_call(F&& fn, Ts&&... args) {
 
 	GLuint shader = gl_call(glCreateShader, kind);
 
+	VIZZY_DEBUG("shader type = {}", kind);
+
 	if (shader == 0) {
 		vizzy::die("glCreateShader failed!");
 	}
@@ -222,9 +224,18 @@ inline void gl_call(F&& fn, Ts&&... args) {
 [[nodiscard]] inline GLuint create_pipeline(std::vector<GLuint> programs) {
 	// INFO: https://www.khronos.org/opengl/wiki/Shader_Compilation#Separate_programs
 
-	std::vector<std::pair<GLbitfield, GLuint>> program_stages;
+	VIZZY_FUNCTION();
+	VIZZY_DEBUG("program count = {}", programs.size());
 
+	std::vector<std::pair<GLbitfield, GLuint>> program_mapping;
+
+	// Loop through programs and figure out what kind of shaders are attached to them.
+	// We generate a bitfield of all of the stages inside the program and then store this
+	// information in a mapping before passing it to the overloaded create_pipeline function which
+	// expects explicit mappings between stages and programs.
 	for (auto program: programs) {
+		VIZZY_DEBUG("program = {}", program);
+
 		int shaders_length = gl_get_program(program, GL_ATTACHED_SHADERS);
 
 		std::vector<GLuint> shaders;
@@ -235,14 +246,19 @@ inline void gl_call(F&& fn, Ts&&... args) {
 		GLbitfield stages = 0;
 
 		for (auto shader: shaders) {
+			VIZZY_DEBUG("shader = {}", shader);
+
 			int kind = gl_get_shader(shader, GL_SHADER_TYPE);
-			stages &= ogl_shader_type_to_bitfield(kind);
+			stages |= ogl_shader_type_to_bitfield(kind);
+
+			VIZZY_DEBUG("shader type = {}", kind);
 		}
 
-		program_stages.emplace_back(stages, program);
+		VIZZY_DEBUG("stages = {}", stages);
+		program_mapping.emplace_back(stages, program);
 	}
 
-	return create_pipeline(program_stages);
+	return create_pipeline(program_mapping);
 }
 
 enum : uint64_t {
@@ -355,9 +371,14 @@ int main(int argc, const char* argv[]) {
 			}
 		)"sv });
 
+		// auto pipeline = create_pipeline({
+		// 	{ GL_VERTEX_SHADER_BIT, vert },
+		// 	{ GL_FRAGMENT_SHADER_BIT, frag },
+		// });
+
 		auto pipeline = create_pipeline({
-			{ GL_VERTEX_SHADER_BIT, vert },
-			{ GL_FRAGMENT_SHADER_BIT, frag },
+			vert,
+			frag,
 		});
 
 		glBindProgramPipeline(pipeline);
