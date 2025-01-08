@@ -75,6 +75,17 @@ inline void gl_call(F&& fn, Ts&&... args) {
 	}
 }
 
+[[nodiscard]] inline GLint gl_get_pipeline(GLuint pipeline, GLenum param) {
+	GLint v = 0;
+
+	gl_call(glGetProgramPipelineiv,
+		pipeline,
+		param,
+		&v);  // INFO: https://registry.khronos.org/OpenGL-Refpages/gl4/html/glGetProgramPipeline.xhtml
+
+	return v;
+}
+
 [[nodiscard]] inline GLint gl_get_program(GLuint program, GLenum param) {
 	GLint v = 0;
 
@@ -185,7 +196,7 @@ inline void gl_call(F&& fn, Ts&&... args) {
 	gl_call(glGetProgramInfoLog, program, validation_length, nullptr, validation.data());
 
 	VIZZY_DEBUG("valid = {}", valid ? "true" : "false");
-	VIZZY_DEBUG("validation = '{}'", validation.empty() ? "<empty>" : vizzy::trim(validation));
+	VIZZY_DEBUG("validation = '{}'", validation.empty() ? "<empty>" : validation);
 
 	if (valid != GL_TRUE) {
 		gl_call(glDeleteProgram, program);
@@ -211,13 +222,32 @@ inline void gl_call(F&& fn, Ts&&... args) {
 	GLuint pipeline;
 	glGenProgramPipelines(1, &pipeline);
 
+	// Attach programs to stages.
 	for (auto [stage, program]: programs) {
 		VIZZY_DEBUG("stage = {:#b}, program = {}", stage, program);
 		gl_call(glUseProgramStages, pipeline, stage, program);
 	}
 
-	VIZZY_OKAY("successfully generated pipeline ({})", pipeline);
+	// Validation (INFO: https://docs.gl/es3/glValidateProgramPipeline)
+	glValidateProgramPipeline(pipeline);
 
+	int valid = gl_get_pipeline(pipeline, GL_VALIDATE_STATUS);
+	int validation_length = gl_get_pipeline(pipeline, GL_INFO_LOG_LENGTH);
+
+	std::string validation;
+	validation.resize(validation_length, '\0');
+
+	gl_call(glGetProgramPipelineInfoLog, pipeline, validation_length, nullptr, validation.data());
+
+	VIZZY_DEBUG("valid = {}", valid ? "true" : "false");
+	VIZZY_DEBUG("validation = '{}'", validation.empty() ? "<empty>" : validation);
+
+	if (valid != GL_TRUE) {
+		gl_call(glDeleteProgramPipelines, 1, &pipeline);
+		vizzy::die("validation failed! GL: {}", validation);
+	}
+
+	VIZZY_OKAY("successfully generated pipeline ({})", pipeline);
 	return pipeline;
 }
 
@@ -258,6 +288,7 @@ inline void gl_call(F&& fn, Ts&&... args) {
 		program_mapping.emplace_back(stages, program);
 	}
 
+	VIZZY_OKAY("successfully generated pipeline mapping ({})", program_mapping);
 	return create_pipeline(program_mapping);
 }
 
@@ -346,17 +377,6 @@ int main(int argc, const char* argv[]) {
 
 		VIZZY_DEBUG("OpenGL version: {}.{}", GLAD_VERSION_MAJOR(gl_version), GLAD_VERSION_MINOR(gl_version));
 
-		auto frag = create_shader_program(GL_FRAGMENT_SHADER, { R"(
-			#version 330 core
-
-			in vec3 colour_out;
-			out vec4 colour;
-
-			void main() {
-			    colour = vec4(colour_out, 1.0);
-			}
-		)"sv });
-
 		auto vert = create_shader_program(GL_VERTEX_SHADER, { R"(
 			#version 330 core
 
@@ -369,12 +389,18 @@ int main(int argc, const char* argv[]) {
 				gl_Position = vec4(position, 0.0, 1.0);
 				colour_out = colour_in;
 			}
-		)"sv });
+		)" });
 
-		// auto pipeline = create_pipeline({
-		// 	{ GL_VERTEX_SHADER_BIT, vert },
-		// 	{ GL_FRAGMENT_SHADER_BIT, frag },
-		// });
+		auto frag = create_shader_program(GL_FRAGMENT_SHADER, { R"(
+			#version 330 core
+
+			in vec3 colour_out;
+			out vec4 colour;
+
+			void main() {
+			    colour = vec4(colour_out, 1.0);
+			}
+		)" });
 
 		auto pipeline = create_pipeline({
 			vert,
