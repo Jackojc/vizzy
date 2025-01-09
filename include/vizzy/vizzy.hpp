@@ -247,6 +247,11 @@ namespace vizzy {
 		return log(std::cerr, kind, info, std::forward<Ts>(args)...);
 	}
 
+	template <typename... Ts>
+	inline decltype(auto) log(LogKind kind, Ts&&... args) {
+		return log(std::cerr, kind, std::nullopt, std::forward<Ts>(args)...);
+	}
+
 	namespace detail {
 		template <typename T>
 		inline decltype(auto) inspect(

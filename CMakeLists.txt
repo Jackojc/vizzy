@@ -42,5 +42,5 @@ add_subdirectory(deps/sol2/)
 target_link_libraries(${PROJECT_NAME} PRIVATE sol2)
 
 add_subdirectory("${GLAD_SOURCES_DIR}/cmake" glad_cmake)
-glad_add_library(glad REPRODUCIBLE API gl:core=4.6)
+glad_add_library(glad REPRODUCIBLE DEBUG API gl:core=4.6)
 target_link_libraries(${PROJECT_NAME} PRIVATE glad)

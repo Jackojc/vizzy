@@ -54,6 +54,46 @@
 	vizzy::die("unknown shader type");  // TODO: Implement unreachable macro
 }
 
+[[nodiscard]] inline std::string_view ogl_debug_source_to_str(GLenum source) {
+	switch (source) {
+		case GL_DEBUG_SOURCE_API: return "api";
+		case GL_DEBUG_SOURCE_WINDOW_SYSTEM: return "window system";
+		case GL_DEBUG_SOURCE_SHADER_COMPILER: return "shader compiler";
+		case GL_DEBUG_SOURCE_THIRD_PARTY: return "third party";
+		case GL_DEBUG_SOURCE_APPLICATION: return "application";
+		case GL_DEBUG_SOURCE_OTHER: return "other";
+	}
+
+	vizzy::die("unknown debug source");  // TODO: Implement unreachable macro
+}
+
+[[nodiscard]] inline std::string_view ogl_debug_type_to_str(GLenum type) {
+	switch (type) {
+		case GL_DEBUG_TYPE_ERROR: return "error";
+		case GL_DEBUG_TYPE_DEPRECATED_BEHAVIOR: return "deprecated behaviour";
+		case GL_DEBUG_TYPE_UNDEFINED_BEHAVIOR: return "undefined behaviour";
+		case GL_DEBUG_TYPE_PORTABILITY: return "portability";
+		case GL_DEBUG_TYPE_PERFORMANCE: return "performance";
+		case GL_DEBUG_TYPE_MARKER: return "marker";
+		case GL_DEBUG_TYPE_PUSH_GROUP: return "push group";
+		case GL_DEBUG_TYPE_POP_GROUP: return "pop group";
+		case GL_DEBUG_TYPE_OTHER: return "other";
+	}
+
+	vizzy::die("unknown debug type");  // TODO: Implement unreachable macro
+}
+
+[[nodiscard]] inline std::string_view ogl_debug_severity_to_str(GLenum severity) {
+	switch (severity) {
+		case GL_DEBUG_SEVERITY_HIGH: return "high";
+		case GL_DEBUG_SEVERITY_MEDIUM: return "medium";
+		case GL_DEBUG_SEVERITY_LOW: return "low";
+		case GL_DEBUG_SEVERITY_NOTIFICATION: return "notify";
+	}
+
+	vizzy::die("unknown debug severity");  // TODO: Implement unreachable macro
+}
+
 template <typename F, typename... Ts>
 [[nodiscard]] inline decltype(auto) gl_call(F&& fn, Ts&&... args) {
 	decltype(auto) v = fn(std::forward<Ts>(args)...);
@@ -104,6 +144,15 @@ inline void gl_call(F&& fn, Ts&&... args) {
 		shader,
 		param,
 		&v);  // INFO: https://registry.khronos.org/OpenGL-Refpages/gl4/html/glGetShader.xhtml
+
+	return v;
+}
+
+[[nodiscard]] inline GLint gl_get_integer(GLenum param) {
+	GLint v = 0;
+
+	gl_call(glGetIntegerv, param,
+		&v);  // INFO: https://registry.khronos.org/OpenGL-Refpages/gl4/html/glGet.xhtml
 
 	return v;
 }
@@ -292,6 +341,36 @@ inline void gl_call(F&& fn, Ts&&... args) {
 	return create_pipeline(program_mapping);
 }
 
+using PreCallback = void (*)(const char* name, GLADapiproc apiproc, int len_args, ...);
+using PostCallback = void (*)(void* ret, const char* name, GLADapiproc apiproc, int len_args, ...);
+
+inline void pre_callback(
+	[[maybe_unused]] const char* name, [[maybe_unused]] GLADapiproc apiproc, [[maybe_unused]] int len_args, ...) {
+	// VIZZY_WARN("PreCallback '{}'", name);
+}
+
+inline void post_callback([[maybe_unused]] void* ret,
+	[[maybe_unused]] const char* name,
+	[[maybe_unused]] GLADapiproc apiproc,
+	[[maybe_unused]] int len_args,
+	...) {
+	// VIZZY_WARN("PostCallback '{}'", name);
+}
+
+inline void debug_callback(GLenum source,
+	GLenum type,
+	GLuint id,
+	GLenum severity,
+	[[maybe_unused]] GLsizei length,
+	const GLchar* message,
+	[[maybe_unused]] const void* user_param) {
+	auto source_str = ogl_debug_source_to_str(source);
+	auto type_str = ogl_debug_type_to_str(type);
+	auto severity_str = ogl_debug_severity_to_str(severity);
+
+	vizzy::log(vizzy::LogKind::Debug, "GL ({}) [{}] [{}] [{}] : {}", id, source_str, type_str, severity_str, message);
+}
+
 enum : uint64_t {
 	OPT_HELP = 1 << 0,
 };
@@ -355,6 +434,7 @@ int main(int argc, const char* argv[]) {
 		SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, VIZZY_OPENGL_VERSION_MINOR);
 
 		SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
+		SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_DEBUG_FLAG);
 
 		SDL_Window* window = SDL_CreateWindow(VIZZY_EXE,
 			SDL_WINDOWPOS_UNDEFINED,
@@ -377,6 +457,21 @@ int main(int argc, const char* argv[]) {
 
 		VIZZY_DEBUG("OpenGL version: {}.{}", GLAD_VERSION_MAJOR(gl_version), GLAD_VERSION_MINOR(gl_version));
 
+		// Set debug callbacks
+		gladSetGLPreCallback(pre_callback);
+		gladSetGLPostCallback(post_callback);
+
+		if (gl_get_integer(GL_CONTEXT_FLAGS) & GL_CONTEXT_FLAG_DEBUG_BIT) {
+			VIZZY_OKAY("debugging enabled");
+
+			glEnable(GL_DEBUG_OUTPUT);
+			glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+
+			glDebugMessageCallback(debug_callback, nullptr);
+			glDebugMessageControl(GL_DONT_CARE, GL_DONT_CARE, GL_DONT_CARE, 0, nullptr, GL_TRUE);
+		}
+
+		// Setup shaders
 		auto vert = create_shader_program(GL_VERTEX_SHADER, { R"(
 			#version 330 core
 
