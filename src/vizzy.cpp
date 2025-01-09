@@ -6,9 +6,6 @@
 #include <vector>
 #include <array>
 
-#include <libremidi/libremidi.hpp>
-#include <libremidi/reader.hpp>
-
 #include <conflict/conflict.hpp>
 
 #include <fmt/core.h>
@@ -17,13 +14,15 @@
 #include <fmt/color.h>
 #include <fmt/ostream.h>
 
+#include <SDL2/SDL.h>
 #include <glad/gl.h>
 #include <cglm/struct.h>
 
 #define SOL_ALL_SAFETIES_ON 1
 #include <sol/sol.hpp>
 
-#include <SDL2/SDL.h>
+#include <libremidi/libremidi.hpp>
+#include <libremidi/reader.hpp>
 
 #include <vizzy/vizzy.hpp>
 
@@ -379,6 +378,7 @@ int main(int argc, const char* argv[]) {
 	using namespace std::literals;
 
 	try {
+		// Parse arguments
 		uint64_t flags;
 		std::string_view filename;
 
@@ -416,14 +416,47 @@ int main(int argc, const char* argv[]) {
 			vizzy::die("no file specified");
 		}
 
-		// Everything is okay
+		// Lua
 		sol::state lua;
 		lua.open_libraries(sol::lib::base, sol::lib::coroutine, sol::lib::string, sol::lib::io);
 
 		std::string script = vizzy::read_file(filename);
 		// lua.script(script);
 
-		// Setup SDL
+		// MIDI
+		{
+			libremidi::observer obs;
+			for (const libremidi::input_port& port: obs.get_input_ports()) {
+				std::cout << port.port_name << "\n";
+			}
+		}
+
+		{
+			libremidi::observer obs;
+			for (const libremidi::output_port& port: obs.get_output_ports()) {
+				std::cout << port.port_name << "\n";
+			}
+		}
+
+		auto my_callback = [](const libremidi::message& message) {
+			VIZZY_DEBUG("event ({}) = {}", message.timestamp, message);
+		};
+
+		// Create the midi object
+		libremidi::midi_in midi { libremidi::input_configuration { .on_message = my_callback } };
+
+		if (auto port = libremidi::midi1::in_default_port(); port.has_value()) {
+			midi.open_port(port.value());
+		}
+
+		else {
+			vizzy::die("no ports available");
+		}
+
+		while (true) {}
+		VIZZY_DIE("MIDI");
+
+		// Setup window
 		if (SDL_Init(SDL_INIT_EVERYTHING) != 0) {
 			vizzy::die("SDL_Init failed!");
 		}
@@ -455,6 +488,7 @@ int main(int argc, const char* argv[]) {
 			vizzy::die("gladLoadGLLoader failed!");
 		}
 
+		// Version information
 		SDL_version sdl_compiled;
 		SDL_version sdl_linked;
 
@@ -466,10 +500,12 @@ int main(int argc, const char* argv[]) {
 
 		VIZZY_DEBUG("OpenGL version: {}.{}", GLAD_VERSION_MAJOR(gl_version), GLAD_VERSION_MINOR(gl_version));
 
+		// Platform information
 		VIZZY_DEBUG("platform = {}", SDL_GetPlatform());
 		VIZZY_DEBUG("cpus = {}", SDL_GetCPUCount());
 		VIZZY_DEBUG("l1 cache = {}b", SDL_GetCPUCacheLineSize());
-		VIZZY_DEBUG("system memory: {}MiB", SDL_GetSystemRAM());
+		VIZZY_DEBUG("system memory = {}MiB", SDL_GetSystemRAM());
+		VIZZY_DEBUG("video driver = {}", SDL_GetCurrentVideoDriver());
 
 		// Set debug callbacks
 		gladSetGLPreCallback(pre_callback);
@@ -604,6 +640,5 @@ int main(int argc, const char* argv[]) {
 	}
 
 	VIZZY_OKAY("done");
-
 	return EXIT_SUCCESS;
 }
