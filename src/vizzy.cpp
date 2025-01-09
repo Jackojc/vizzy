@@ -466,6 +466,11 @@ int main(int argc, const char* argv[]) {
 
 		VIZZY_DEBUG("OpenGL version: {}.{}", GLAD_VERSION_MAJOR(gl_version), GLAD_VERSION_MINOR(gl_version));
 
+		VIZZY_DEBUG("platform = {}", SDL_GetPlatform());
+		VIZZY_DEBUG("cpus = {}", SDL_GetCPUCount());
+		VIZZY_DEBUG("l1 cache = {}b", SDL_GetCPUCacheLineSize());
+		VIZZY_DEBUG("system memory: {}MiB", SDL_GetSystemRAM());
+
 		// Set debug callbacks
 		gladSetGLPreCallback(pre_callback);
 		gladSetGLPostCallback(post_callback);
