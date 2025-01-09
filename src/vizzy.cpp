@@ -455,6 +455,15 @@ int main(int argc, const char* argv[]) {
 			vizzy::die("gladLoadGLLoader failed!");
 		}
 
+		SDL_version sdl_compiled;
+		SDL_version sdl_linked;
+
+		SDL_VERSION(&sdl_compiled);
+		SDL_GetVersion(&sdl_linked);
+
+		VIZZY_DEBUG("SDL version (compiled): {}.{}.{}", sdl_compiled.major, sdl_compiled.minor, sdl_compiled.patch);
+		VIZZY_DEBUG("SDL version (linked): {}.{}.{}", sdl_linked.major, sdl_linked.minor, sdl_linked.patch);
+
 		VIZZY_DEBUG("OpenGL version: {}.{}", GLAD_VERSION_MAJOR(gl_version), GLAD_VERSION_MINOR(gl_version));
 
 		// Set debug callbacks
