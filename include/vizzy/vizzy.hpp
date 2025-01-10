@@ -21,8 +21,8 @@
 namespace vizzy {
 #define VIZZY_EXE "Vizzy"
 
-#define VIZZY_WINDOW_WIDTH  1280
-#define VIZZY_WINDOW_HEIGHT 720
+#define VIZZY_WINDOW_WIDTH  800
+#define VIZZY_WINDOW_HEIGHT 600
 
 // Bindings were generated as 4.3 core
 #define VIZZY_OPENGL_VERSION_MAJOR 4

@@ -424,26 +424,24 @@ int main(int argc, const char* argv[]) {
 		// lua.script(script);
 
 		// MIDI
-		{
-			libremidi::observer obs;
-			for (const libremidi::input_port& port: obs.get_input_ports()) {
-				std::cout << port.port_name << "\n";
-			}
+		libremidi::observer obs;
+
+		VIZZY_TRACE("MIDI inputs:");
+		for (const libremidi::input_port& port: obs.get_input_ports()) {
+			VIZZY_OKAY("input: {}", port.port_name);
 		}
 
-		{
-			libremidi::observer obs;
-			for (const libremidi::output_port& port: obs.get_output_ports()) {
-				std::cout << port.port_name << "\n";
-			}
+		VIZZY_TRACE("MIDI outputs:");
+		for (const libremidi::output_port& port: obs.get_output_ports()) {
+			VIZZY_OKAY("output: {}", port.port_name);
 		}
 
-		auto my_callback = [](const libremidi::message& message) {
+		auto midi_ev_callback = [](const libremidi::message& message) {
 			VIZZY_DEBUG("event ({}) = {}", message.timestamp, message);
 		};
 
 		// Create the midi object
-		libremidi::midi_in midi { libremidi::input_configuration { .on_message = my_callback } };
+		libremidi::midi_in midi { libremidi::input_configuration { .on_message = midi_ev_callback } };
 
 		if (auto port = libremidi::midi1::in_default_port(); port.has_value()) {
 			midi.open_port(port.value());
@@ -453,8 +451,8 @@ int main(int argc, const char* argv[]) {
 			vizzy::die("no ports available");
 		}
 
-		while (true) {}
-		VIZZY_DIE("MIDI");
+		// while (true) {}
+		// VIZZY_DIE("MIDI");
 
 		// Setup window
 		if (SDL_Init(SDL_INIT_EVERYTHING) != 0) {
@@ -525,25 +523,27 @@ int main(int argc, const char* argv[]) {
 		auto vert = create_shader_program(GL_VERTEX_SHADER, { R"(
 			#version 330 core
 
-			in vec2 position;
-			in vec3 colour_in;
+			layout (location = 0) in vec2 aPos;
+			layout (location = 1) in vec2 aTexCoords;
 
-			out vec3 colour_out;
+			out vec2 TexCoords;
 
 			void main() {
-				gl_Position = vec4(position, 0.0, 1.0);
-				colour_out = colour_in;
+				gl_Position = vec4(aPos.x, aPos.y. 0.0, 1.0);
+				TexCoords = aTexCoords;
 			}
 		)" });
 
 		auto frag = create_shader_program(GL_FRAGMENT_SHADER, { R"(
 			#version 330 core
 
-			in vec3 colour_out;
-			out vec4 colour;
+			out vec4 FragColor;
+			in vec2 TexCoords;
+
+			uniform sampler2D screenTexture;
 
 			void main() {
-			    colour = vec4(colour_out, 1.0);
+			    FragColor = texture(screenTexture, TexCoords);
 			}
 		)" });
 
@@ -552,45 +552,74 @@ int main(int argc, const char* argv[]) {
 			frag,
 		});
 
-		glBindProgramPipeline(pipeline);
-
 		// Triangle
-		struct Vertex {
-			vec2s pos;
-			vec3s col;
-		};
+		// struct Vertex {
+		// 	vec2s pos;
+		// 	vec3s col;
+		// };
 
-		std::array vertices = {
-			Vertex { { { 0.0f, 0.5f } },     // Vertex 1 (X, Y)
-				{ { 1.0f, 0.0f, 0.0f } } },  // Vertex 1 (R, G, B)
+		// std::array vertices = {
+		// 	Vertex { { { 0.0f, 0.5f } },     // Vertex 1 (X, Y)
+		// 		{ { 1.0f, 0.0f, 0.0f } } },  // Vertex 1 (R, G, B)
 
-			Vertex { { { 0.5f, -0.5f } },    // Vertex 2 (X, Y)
-				{ { 0.0f, 1.0f, 0.0f } } },  // Vertex 2 (R, G, B)
+		// 	Vertex { { { 0.5f, -0.5f } },    // Vertex 2 (X, Y)
+		// 		{ { 0.0f, 1.0f, 0.0f } } },  // Vertex 2 (R, G, B)
 
-			Vertex { { { -0.5f, -0.5f } },   // Vertex 3 (X, Y)
-				{ { 0.0f, 0.0f, 1.0f } } },  // Vertex 3 (R, G, B)
-		};
+		// 	Vertex { { { -0.5f, -0.5f } },   // Vertex 3 (X, Y)
+		// 		{ { 0.0f, 0.0f, 1.0f } } },  // Vertex 3 (R, G, B)
+		// };
 
-		GLuint vao;
-		GLuint vbo;
+		// GLuint vao;
+		// GLuint vbo;
 
-		glGenBuffers(1, &vbo);
-		glBindBuffer(GL_ARRAY_BUFFER, vbo);
+		// glGenBuffers(1, &vbo);
+		// glBindBuffer(GL_ARRAY_BUFFER, vbo);
 
-		glGenVertexArrays(1, &vao);
-		glBindVertexArray(vao);
+		// glGenVertexArrays(1, &vao);
+		// glBindVertexArray(vao);
 
-		glBufferData(
-			GL_ARRAY_BUFFER, vertices.size() * sizeof(decltype(vertices)::value_type), vertices.data(), GL_STATIC_DRAW);
+		// glBufferData(
+		// 	GL_ARRAY_BUFFER, vertices.size() * sizeof(decltype(vertices)::value_type), vertices.data(), GL_STATIC_DRAW);
 
-		GLint pa = glGetAttribLocation(vert, "position");
-		glVertexAttribPointer(pa, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, pos));
+		// GLint pa = glGetAttribLocation(vert, "position");
+		// glVertexAttribPointer(pa, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, pos));
 
-		GLint ca = glGetAttribLocation(vert, "colour_in");
-		glVertexAttribPointer(ca, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, col));
+		// GLint ca = glGetAttribLocation(vert, "colour_in");
+		// glVertexAttribPointer(ca, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, col));
 
-		glEnableVertexAttribArray(pa);
-		glEnableVertexAttribArray(ca);
+		// glEnableVertexAttribArray(pa);
+		// glEnableVertexAttribArray(ca);
+
+		GLuint fbo;
+		glGenFramebuffers(1, &fbo);
+
+		glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+
+		// generate texture
+		unsigned int textureColorbuffer;
+		glGenTextures(1, &textureColorbuffer);
+		glBindTexture(GL_TEXTURE_2D, textureColorbuffer);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 800, 600, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glBindTexture(GL_TEXTURE_2D, 0);
+
+		// attach it to currently bound framebuffer object
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, textureColorbuffer, 0);
+
+		unsigned int rbo;
+		glGenRenderbuffers(1, &rbo);
+		glBindRenderbuffer(GL_RENDERBUFFER, rbo);
+		glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, 800, 600);
+		glBindRenderbuffer(GL_RENDERBUFFER, 0);
+
+		glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, rbo);
+
+		if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+			vizzy::die("could not bind framebuffer");
+		}
+
+		glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
 		// Event loop
 		VIZZY_OKAY("loop");
@@ -614,15 +643,28 @@ int main(int argc, const char* argv[]) {
 				}
 			}
 
-			glClearColor(0, 0, 0, 1);
+			glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+			glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
+			glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);  // we're not using the stencil buffer now
+			glEnable(GL_DEPTH_TEST);
+
+			// second pass
+			glBindFramebuffer(GL_FRAMEBUFFER, 0);  // back to default
+			glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
 			glClear(GL_COLOR_BUFFER_BIT);
 
-			glDrawArrays(GL_TRIANGLES, 0, 3);
+			glBindProgramPipeline(pipeline);
+
+			// glDisable(GL_DEPTH_TEST);
+			// glBindTexture(GL_TEXTURE_2D, textureColorbuffer);
+			// glDrawArrays(GL_TRIANGLES, 0, 6);
 
 			SDL_GL_SwapWindow(window);
 		}
 
 		// Cleanup
+		glDeleteFramebuffers(1, &fbo);
+
 		glDeleteProgramPipelines(1, &pipeline);
 
 		glDeleteProgram(frag);
