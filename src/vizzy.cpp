@@ -198,7 +198,7 @@ inline void gl_call(F&& fn, Ts&&... args) {
 	VIZZY_FUNCTION();
 
 	GLuint program = gl_call(glCreateProgram);
-	gl_call(glProgramParameteri, program, GL_PROGRAM_SEPARABLE, GL_TRUE);
+	// gl_call(glProgramParameteri, program, GL_PROGRAM_SEPARABLE, GL_TRUE);
 
 	if (program == 0) {
 		vizzy::die("glCreateProgram failed!");
@@ -206,6 +206,7 @@ inline void gl_call(F&& fn, Ts&&... args) {
 
 	// Linking
 	for (auto shader: shaders) {
+		VIZZY_DEBUG("shader: {}", shader);
 		gl_call(glAttachShader, program, shader);
 		gl_call(glDeleteShader, shader);
 	}
@@ -520,37 +521,41 @@ int main(int argc, const char* argv[]) {
 		}
 
 		// Setup shaders
-		auto vert = create_shader_program(GL_VERTEX_SHADER, { R"(
+		auto vert = create_shader(GL_VERTEX_SHADER, { R"(
 			#version 330 core
 
-			layout (location = 0) in vec2 aPos;
-			layout (location = 1) in vec2 aTexCoords;
-
-			out vec2 TexCoords;
+			out vec2 texCoord;
 
 			void main() {
-				gl_Position = vec4(aPos.x, aPos.y. 0.0, 1.0);
-				TexCoords = aTexCoords;
+				vec2 position = vec2(gl_VertexID % 2, gl_VertexID / 2) * 4.0 - 1;
+				texCoord = (position + 1) * 0.5;
+
+				gl_Position = vec4(position, 0, 1);
 			}
 		)" });
 
-		auto frag = create_shader_program(GL_FRAGMENT_SHADER, { R"(
+		auto frag = create_shader(GL_FRAGMENT_SHADER, { R"(
 			#version 330 core
 
+			uniform float current_time;
 			out vec4 FragColor;
-			in vec2 TexCoords;
 
-			uniform sampler2D screenTexture;
+			in vec2 texCoord;
 
 			void main() {
-			    FragColor = texture(screenTexture, TexCoords);
+			    FragColor = vec4(texCoord, 1, 1.0);
 			}
 		)" });
 
-		auto pipeline = create_pipeline({
-			vert,
-			frag,
-		});
+		auto program = create_program({ vert, frag });
+
+		// auto pipeline = create_pipeline({
+		// 	vert,
+		// 	frag,
+		// });
+
+		// Setup shader state
+		// glUniform1i(glGetUniformLocation(frag, "current_time"), SDL_GetTicks());
 
 		// Triangle
 		// struct Vertex {
@@ -569,14 +574,16 @@ int main(int argc, const char* argv[]) {
 		// 		{ { 0.0f, 0.0f, 1.0f } } },  // Vertex 3 (R, G, B)
 		// };
 
-		// GLuint vao;
+		glUseProgram(program);
+
+		GLuint vao;
 		// GLuint vbo;
 
 		// glGenBuffers(1, &vbo);
 		// glBindBuffer(GL_ARRAY_BUFFER, vbo);
 
-		// glGenVertexArrays(1, &vao);
-		// glBindVertexArray(vao);
+		glGenVertexArrays(1, &vao);
+		glBindVertexArray(vao);
 
 		// glBufferData(
 		// 	GL_ARRAY_BUFFER, vertices.size() * sizeof(decltype(vertices)::value_type), vertices.data(), GL_STATIC_DRAW);
@@ -590,36 +597,36 @@ int main(int argc, const char* argv[]) {
 		// glEnableVertexAttribArray(pa);
 		// glEnableVertexAttribArray(ca);
 
-		GLuint fbo;
-		glGenFramebuffers(1, &fbo);
+		// GLuint fbo;
+		// glGenFramebuffers(1, &fbo);
 
-		glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+		// glBindFramebuffer(GL_FRAMEBUFFER, fbo);
 
-		// generate texture
-		unsigned int textureColorbuffer;
-		glGenTextures(1, &textureColorbuffer);
-		glBindTexture(GL_TEXTURE_2D, textureColorbuffer);
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 800, 600, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-		glBindTexture(GL_TEXTURE_2D, 0);
+		// // generate texture
+		// unsigned int textureColorbuffer;
+		// glGenTextures(1, &textureColorbuffer);
+		// glBindTexture(GL_TEXTURE_2D, textureColorbuffer);
+		// glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 800, 600, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
+		// glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		// glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		// glBindTexture(GL_TEXTURE_2D, 0);
 
-		// attach it to currently bound framebuffer object
-		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, textureColorbuffer, 0);
+		// // attach it to currently bound framebuffer object
+		// glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, textureColorbuffer, 0);
 
-		unsigned int rbo;
-		glGenRenderbuffers(1, &rbo);
-		glBindRenderbuffer(GL_RENDERBUFFER, rbo);
-		glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, 800, 600);
-		glBindRenderbuffer(GL_RENDERBUFFER, 0);
+		// unsigned int rbo;
+		// glGenRenderbuffers(1, &rbo);
+		// glBindRenderbuffer(GL_RENDERBUFFER, rbo);
+		// glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, 800, 600);
+		// glBindRenderbuffer(GL_RENDERBUFFER, 0);
 
-		glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, rbo);
+		// glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, rbo);
 
-		if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
-			vizzy::die("could not bind framebuffer");
-		}
+		// if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+		// 	vizzy::die("could not bind framebuffer");
+		// }
 
-		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+		// glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
 		// Event loop
 		VIZZY_OKAY("loop");
@@ -631,10 +638,11 @@ int main(int argc, const char* argv[]) {
 					break;
 				}
 
-				else if (ev.type == SDL_WINDOWEVENT_RESIZED) {
+				else if (ev.type == SDL_WINDOWEVENT_RESIZED or ev.type == SDL_WINDOWEVENT_SIZE_CHANGED) {
 					int w, h;
 					SDL_GL_GetDrawableSize(window, &w, &h);
 					glViewport(0, 0, w, h);
+					VIZZY_DEBUG("x = {}, y = {}", w, h);
 					break;
 				}
 
@@ -643,17 +651,26 @@ int main(int argc, const char* argv[]) {
 				}
 			}
 
-			glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-			glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
-			glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);  // we're not using the stencil buffer now
-			glEnable(GL_DEPTH_TEST);
+			// glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+			// glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
+			// glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);  // we're not using the stencil buffer now
+			// glEnable(GL_DEPTH_TEST);
 
 			// second pass
-			glBindFramebuffer(GL_FRAMEBUFFER, 0);  // back to default
-			glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
+			// glBindFramebuffer(GL_FRAMEBUFFER, 0);  // back to default
+			// glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
+			// glClear(GL_COLOR_BUFFER_BIT);
+
+			glClearColor(.0f, .0f, .0f, 1.0f);
 			glClear(GL_COLOR_BUFFER_BIT);
 
-			glBindProgramPipeline(pipeline);
+			// glUniform1i(glGetUniformLocation(frag, "current_time"), SDL_GetTicks());
+			// glBindProgramPipeline(pipeline);
+
+			glUseProgram(program);
+			glUniform1i(glGetUniformLocation(program, "current_time"), SDL_GetTicks());
+
+			glDrawArrays(GL_TRIANGLES, 0, 3);
 
 			// glDisable(GL_DEPTH_TEST);
 			// glBindTexture(GL_TEXTURE_2D, textureColorbuffer);
@@ -663,12 +680,14 @@ int main(int argc, const char* argv[]) {
 		}
 
 		// Cleanup
-		glDeleteFramebuffers(1, &fbo);
+		// glDeleteFramebuffers(1, &fbo);
 
-		glDeleteProgramPipelines(1, &pipeline);
+		// glDeleteProgramPipelines(1, &pipeline);
 
-		glDeleteProgram(frag);
-		glDeleteProgram(vert);
+		// glDeleteProgram(frag);
+		// glDeleteProgram(vert);
+		//
+		glDeleteProgram(program);
 
 		SDL_DestroyWindow(window);
 		SDL_GL_DeleteContext(gl);
