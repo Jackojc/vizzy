@@ -1,6 +1,15 @@
 # TODO
 
+### General
+- Update GL debug callback to map severity level to loglevels of vizzy
+- Move strings to locale file and update phrasing to be consistent
+- Make better logging format
+- Move to using RAII to handle GL objects so they are freed automatically
+- File watcher to enable hot reloading of "scenes" and shaders
+
 ### MIDI
+- Add flag to specify MIDI source
+- Add flag to list MIDI devices
 - LibreMIDI setup and boilerplate
 - Add argument to specify MIDI device/port to read from
 - Setup MIDI callback to communicate with main thread safely
