@@ -1,10 +1,15 @@
 #include <type_traits>
 #include <iostream>
 #include <filesystem>
+#include <chrono>
 #include <string>
 #include <string_view>
 #include <vector>
 #include <array>
+#include <deque>
+#include <mutex>
+#include <thread>
+#include <limits>
 
 #include <conflict/conflict.hpp>
 
@@ -371,6 +376,166 @@ inline void debug_callback(GLenum source,
 	vizzy::log(vizzy::LogKind::Debug, "GL ({}) [{}] [{}] [{}] : {}", id, source_str, type_str, severity_str, message);
 }
 
+// Envelopes
+namespace vizzy {
+	using clock = std::chrono::steady_clock;
+	using unit = std::chrono::milliseconds;
+	using timepoint = std::chrono::time_point<clock>;
+}
+
+float interp(float start, float end, float time) {
+	return (1.0f - time) * start + time * end;
+}
+
+struct Segment {
+	vizzy::unit start_time;
+	vizzy::unit end_time;
+
+	float start_amp;
+	float end_amp;
+};
+
+struct Stage {
+	vizzy::unit duration;
+	float target;
+};
+
+struct Envelope {
+	std::string_view name;
+
+	std::function<bool(libremidi::message)> pattern;
+	std::vector<Segment> segments;
+
+	vizzy::timepoint trigger;
+
+	float starting_amplitude;
+	float current_amplitude;
+};
+
+// struct EnvelopeState {
+// 	std::vector<std::pair<std::string_view, size_t>> index_lookup;
+// 	std::vector<Envelope> envelopes;
+// };
+
+// inline std::ostream& operator<<(std::ostream& os, Segment s) {
+// 	fmt::print(os,
+// 		fmt::runtime("{ .start_time = {}, .end_time = {}, .start_amp = {}, .end_amp = {} }"),
+// 		s.start_time,
+// 		s.end_time,
+// 		s.start_amp,
+// 		s.end_amp);
+
+// 	return os;
+// }
+
+// inline std::ostream& operator<<(std::ostream& os, Stage s) {
+// 	fmt::print(os, fmt::runtime("{ .duration = {}, .target = {} }"), s.duration, s.target);
+// 	return os;
+// }
+
+// inline std::ostream& operator<<(std::ostream& os, Envelope e) {
+// 	fmt::print(os,
+// 		fmt::runtime("{ .name = {}, .trigger = {}, .segments = {} }"),
+// 		e.name,
+// 		std::chrono::duration_cast<vizzy::unit>(e.trigger.time_since_epoch()),
+// 		e.segments);
+
+// 	return os;
+// }
+
+// template <>
+// struct fmt::formatter<Segment>: fmt::ostream_formatter {};
+
+// template <>
+// struct fmt::formatter<Stage>: fmt::ostream_formatter {};
+
+// template <>
+// struct fmt::formatter<Envelope>: fmt::ostream_formatter {};
+
+inline float update_envelope(float continue_amp, vizzy::timepoint trigger, const std::vector<Segment>& segments) {
+	auto current_time = vizzy::clock::now();
+	auto env_relative_time = current_time - trigger;
+
+	auto it = std::find_if(segments.begin(), segments.end(), [&](const auto& segment) {
+		return env_relative_time >= segment.start_time and env_relative_time < segment.end_time;
+	});
+
+	auto index = std::distance(segments.begin(), it);
+
+	if (it == segments.end()) {
+		return 0.0;
+	}
+
+	// Active stage
+	auto [start_time, end_time, start_amp, end_amp] = *it;
+
+	std::chrono::duration<float> stage_relative_time = env_relative_time - start_time;
+	auto normalised_time = stage_relative_time / (end_time - start_time);
+
+	float amp = index == 0 ? continue_amp : start_amp;
+
+	return interp(amp, end_amp, normalised_time);
+}
+
+inline std::vector<Segment> create_segments(const std::vector<Stage>& stages) {
+	std::vector<Segment> segments;
+
+	using namespace std::chrono_literals;
+
+	vizzy::unit duration_so_far = 0s;
+	float start_amp = 0.0;
+
+	for (auto [duration, target]: stages) {
+		auto start_time = duration_so_far;
+		auto end_time = start_time + duration;
+
+		segments.emplace_back(start_time, end_time, start_amp, target);
+
+		duration_so_far += duration;
+		start_amp = target;
+	}
+
+	return segments;
+}
+
+inline Envelope create_envelope(
+	std::string_view name, std::function<bool(libremidi::message)> pattern, const std::vector<Stage>& stages) {
+	Envelope env;
+
+	env.name = name;
+	env.pattern = pattern;
+	env.segments = create_segments(stages);
+
+	env.trigger = vizzy::timepoint::max();
+
+	env.starting_amplitude = 0.0f;
+	env.current_amplitude = 0.0f;
+
+	return env;
+}
+
+inline void update_envelopes(std::vector<Envelope>& envelopes) {
+	for (auto& [name, pattern, segments, trigger, starting_amplitude, current_amplitude]: envelopes) {
+		current_amplitude = update_envelope(starting_amplitude, trigger, segments);
+	}
+}
+
+inline void trigger_envelopes(std::vector<Envelope>& envelopes, libremidi::message msg) {
+	for (auto& [name, pattern, segments, trigger, starting_amplitude, current_amplitude]: envelopes) {
+		if (pattern(msg)) {
+			starting_amplitude = current_amplitude;
+			trigger = vizzy::clock::now();
+		}
+	}
+}
+
+inline void assign_envelopes(std::vector<Envelope>& envelopes, GLuint program) {
+	for (auto& [name, pattern, segments, trigger, starting_amplitude, current_amplitude]: envelopes) {
+		glUniform1f(glGetUniformLocation(program, name.data()), current_amplitude);
+	}
+}
+
+// Commandline flags
 enum : uint64_t {
 	OPT_HELP = 1 << 0,
 };
@@ -418,11 +583,54 @@ int main(int argc, const char* argv[]) {
 		}
 
 		// Lua
-		sol::state lua;
-		lua.open_libraries(sol::lib::base, sol::lib::coroutine, sol::lib::string, sol::lib::io);
+		// sol::state lua;
+		// lua.open_libraries(sol::lib::base, sol::lib::coroutine, sol::lib::string, sol::lib::io);
 
-		std::string script = vizzy::read_file(filename);
+		// std::string script = vizzy::read_file(filename);
 		// lua.script(script);
+
+		// Envelopes
+		using namespace std::chrono_literals;
+
+		std::mutex envelope_mutex;
+
+		std::vector<Envelope> envelopes = {
+			create_envelope("kick",
+				[](libremidi::message msg) {
+					return msg.get_channel() == 9 and msg.get_message_type() == libremidi::message_type::NOTE_ON and
+						msg[1] == 36;
+				},
+				{
+					{ 50ms, 1.0 },
+					{ 75ms, 0.0 },
+				}),
+			create_envelope("snare",
+				[](libremidi::message msg) {
+					return msg.get_channel() == 9 and msg.get_message_type() == libremidi::message_type::NOTE_ON and
+						msg[1] == 38;
+				},
+				{
+					{ 50ms, 1.0 },
+					{ 100ms, 0.0 },
+				}),
+			create_envelope("hat",
+				[](libremidi::message msg) {
+					return msg.get_channel() == 9 and msg.get_message_type() == libremidi::message_type::NOTE_ON and
+						msg[1] == 46;
+				},
+				{
+					{ 50ms, 1.0 },
+					{ 25ms, 0.0 },
+				}),
+			create_envelope("tb303",
+				[](libremidi::message msg) {
+					return msg.get_message_type() == libremidi::message_type::NOTE_ON and msg.get_channel() == 11;
+				},
+				{
+					{ 20ms, 1.0 },
+					{ 200ms, 0.0 },
+				}),
+		};
 
 		// MIDI
 		libremidi::observer obs;
@@ -437,8 +645,10 @@ int main(int argc, const char* argv[]) {
 			VIZZY_OKAY("output: {}", port.port_name);
 		}
 
-		auto midi_ev_callback = [](const libremidi::message& message) {
-			VIZZY_DEBUG("event ({}) = {}", message.timestamp, message);
+		auto midi_ev_callback = [&](const libremidi::message& message) {
+			// VIZZY_DEBUG(message.get_channel());
+			std::unique_lock lock { envelope_mutex };
+			trigger_envelopes(envelopes, message);
 		};
 
 		// Create the midi object
@@ -452,9 +662,6 @@ int main(int argc, const char* argv[]) {
 			vizzy::die("no ports available");
 		}
 
-		// while (true) {}
-		// VIZZY_DIE("MIDI");
-
 		// Setup window
 		if (SDL_Init(SDL_INIT_EVERYTHING) != 0) {
 			vizzy::die("SDL_Init failed!");
@@ -467,6 +674,8 @@ int main(int argc, const char* argv[]) {
 
 		SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
 		SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_DEBUG_FLAG);
+
+		SDL_GL_SetAttribute(SDL_GL_ALPHA_SIZE, 1);
 
 		SDL_Window* window = SDL_CreateWindow(VIZZY_EXE,
 			SDL_WINDOWPOS_UNDEFINED,
@@ -522,28 +731,35 @@ int main(int argc, const char* argv[]) {
 
 		// Setup shaders
 		auto vert = create_shader(GL_VERTEX_SHADER, { R"(
-			#version 330 core
+			#version 460 core
 
-			out vec2 texCoord;
+			out vec3 out_coord;
+
+			layout (location = 0) in vec3 in_coord;
 
 			void main() {
-				vec2 position = vec2(gl_VertexID % 2, gl_VertexID / 2) * 4.0 - 1;
-				texCoord = (position + 1) * 0.5;
-
-				gl_Position = vec4(position, 0, 1);
+				gl_Position = vec4(in_coord, 1);
+				out_coord = in_coord;
 			}
 		)" });
 
 		auto frag = create_shader(GL_FRAGMENT_SHADER, { R"(
-			#version 330 core
+			#version 460 core
 
+			uniform float aspect;
 			uniform float current_time;
-			out vec4 FragColor;
 
-			in vec2 texCoord;
+			uniform float kick;
+			uniform float snare;
+			uniform float hat;
+
+			uniform float tb303;
+
+			out vec4 colour;
+			in vec3 out_coord;
 
 			void main() {
-			    FragColor = vec4(texCoord, 1, 1.0);
+			    colour = vec4(length(out_coord.xy * kick), length(out_coord.xy * kick), length(out_coord.xy * kick), 1.0);
 			}
 		)" });
 
@@ -554,127 +770,123 @@ int main(int argc, const char* argv[]) {
 		// 	frag,
 		// });
 
-		// Setup shader state
-		// glUniform1i(glGetUniformLocation(frag, "current_time"), SDL_GetTicks());
-
-		// Triangle
-		// struct Vertex {
-		// 	vec2s pos;
-		// 	vec3s col;
-		// };
-
-		// std::array vertices = {
-		// 	Vertex { { { 0.0f, 0.5f } },     // Vertex 1 (X, Y)
-		// 		{ { 1.0f, 0.0f, 0.0f } } },  // Vertex 1 (R, G, B)
-
-		// 	Vertex { { { 0.5f, -0.5f } },    // Vertex 2 (X, Y)
-		// 		{ { 0.0f, 1.0f, 0.0f } } },  // Vertex 2 (R, G, B)
-
-		// 	Vertex { { { -0.5f, -0.5f } },   // Vertex 3 (X, Y)
-		// 		{ { 0.0f, 0.0f, 1.0f } } },  // Vertex 3 (R, G, B)
-		// };
-
 		glUseProgram(program);
 
 		GLuint vao;
-		// GLuint vbo;
-
-		// glGenBuffers(1, &vbo);
-		// glBindBuffer(GL_ARRAY_BUFFER, vbo);
+		GLuint vbo;
+		GLuint ebo;
 
 		glGenVertexArrays(1, &vao);
 		glBindVertexArray(vao);
 
-		// glBufferData(
-		// 	GL_ARRAY_BUFFER, vertices.size() * sizeof(decltype(vertices)::value_type), vertices.data(), GL_STATIC_DRAW);
+		glGenBuffers(1, &vbo);
+		glBindBuffer(GL_ARRAY_BUFFER, vbo);
 
-		// GLint pa = glGetAttribLocation(vert, "position");
-		// glVertexAttribPointer(pa, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, pos));
+		glGenBuffers(1, &ebo);
+		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
 
-		// GLint ca = glGetAttribLocation(vert, "colour_in");
-		// glVertexAttribPointer(ca, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, col));
+		GLfloat vertices[] = {
+			-1,
+			-1,
+			0,  // bottom left corner
+			-1,
+			1,
+			0,  // top left corner
+			1,
+			1,
+			0,  // top right corner
+			1,
+			-1,
+			0,
+		};  // bottom right corner
 
-		// glEnableVertexAttribArray(pa);
-		// glEnableVertexAttribArray(ca);
+		GLubyte indices[] = {
+			0,
+			1,
+			2,  // first triangle (bottom left - top left - top right)
+			0,
+			2,
+			3,
+		};  // second triangle (bottom left - top right - bottom right)
 
-		// GLuint fbo;
-		// glGenFramebuffers(1, &fbo);
+		// vertex attributes
+		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(GLfloat) * 3, 0);
+		glEnableVertexAttribArray(0);
 
-		// glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+		glBindBuffer(GL_ARRAY_BUFFER, vbo);
+		glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_DYNAMIC_DRAW);
 
-		// // generate texture
-		// unsigned int textureColorbuffer;
-		// glGenTextures(1, &textureColorbuffer);
-		// glBindTexture(GL_TEXTURE_2D, textureColorbuffer);
-		// glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 800, 600, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
-		// glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-		// glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-		// glBindTexture(GL_TEXTURE_2D, 0);
-
-		// // attach it to currently bound framebuffer object
-		// glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, textureColorbuffer, 0);
-
-		// unsigned int rbo;
-		// glGenRenderbuffers(1, &rbo);
-		// glBindRenderbuffer(GL_RENDERBUFFER, rbo);
-		// glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, 800, 600);
-		// glBindRenderbuffer(GL_RENDERBUFFER, 0);
-
-		// glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, rbo);
-
-		// if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
-		// 	vizzy::die("could not bind framebuffer");
-		// }
-
-		// glBindFramebuffer(GL_FRAMEBUFFER, 0);
+		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
+		glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_DYNAMIC_DRAW);
 
 		// Event loop
 		VIZZY_OKAY("loop");
 
 		SDL_Event ev;
-		while (true) {
-			if (SDL_PollEvent(&ev)) {
-				if (ev.type == SDL_QUIT) {
-					break;
-				}
+		bool running = true;
 
-				else if (ev.type == SDL_WINDOWEVENT_RESIZED or ev.type == SDL_WINDOWEVENT_SIZE_CHANGED) {
-					int w, h;
-					SDL_GL_GetDrawableSize(window, &w, &h);
-					glViewport(0, 0, w, h);
-					VIZZY_DEBUG("x = {}, y = {}", w, h);
-					break;
-				}
+		auto loop_start = vizzy::clock::now();
 
-				else if (ev.type == SDL_KEYUP && ev.key.keysym.sym == SDLK_ESCAPE) {
-					break;
+		while (running) {
+			while (SDL_PollEvent(&ev)) {
+				switch (ev.type) {
+					case SDL_QUIT: {
+						running = false;
+					} break;
+
+					case SDL_WINDOWEVENT: {
+						switch (ev.window.event) {
+							case SDL_WINDOWEVENT_RESIZED:
+							case SDL_WINDOWEVENT_SIZE_CHANGED: {
+								int w, h;
+								SDL_GL_GetDrawableSize(window, &w, &h);
+
+								glViewport(0, 0, w, h);
+
+								VIZZY_DEBUG("resize event: width = {}, height = {}", w, h);
+							} break;
+
+							default: break;
+						}
+					} break;
+
+					case SDL_KEYUP: {
+						switch (ev.key.keysym.sym) {
+							case SDLK_ESCAPE: {
+								running = false;
+							} break;
+
+							default: break;
+						}
+					} break;
+
+					default: break;
 				}
 			}
-
-			// glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-			// glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
-			// glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);  // we're not using the stencil buffer now
-			// glEnable(GL_DEPTH_TEST);
-
-			// second pass
-			// glBindFramebuffer(GL_FRAMEBUFFER, 0);  // back to default
-			// glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
-			// glClear(GL_COLOR_BUFFER_BIT);
 
 			glClearColor(.0f, .0f, .0f, 1.0f);
 			glClear(GL_COLOR_BUFFER_BIT);
 
-			// glUniform1i(glGetUniformLocation(frag, "current_time"), SDL_GetTicks());
-			// glBindProgramPipeline(pipeline);
-
 			glUseProgram(program);
-			glUniform1i(glGetUniformLocation(program, "current_time"), SDL_GetTicks());
 
-			glDrawArrays(GL_TRIANGLES, 0, 3);
+			{
+				std::unique_lock lock { envelope_mutex };
 
-			// glDisable(GL_DEPTH_TEST);
-			// glBindTexture(GL_TEXTURE_2D, textureColorbuffer);
-			// glDrawArrays(GL_TRIANGLES, 0, 6);
+				update_envelopes(envelopes);
+				assign_envelopes(envelopes, program);
+			}
+
+			int w, h;
+			SDL_GL_GetDrawableSize(window, &w, &h);
+
+			float aspect = static_cast<float>(w) / static_cast<float>(h);
+			VIZZY_INSPECT(aspect);
+			glUniform1f(glGetUniformLocation(program, "aspect"), aspect);
+
+			std::chrono::duration<float> seconds = vizzy::clock::now() - loop_start;
+			glUniform1f(glGetUniformLocation(program, "current_time"), seconds.count());
+
+			glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_BYTE, 0);
 
 			SDL_GL_SwapWindow(window);
 		}
@@ -686,7 +898,7 @@ int main(int argc, const char* argv[]) {
 
 		// glDeleteProgram(frag);
 		// glDeleteProgram(vert);
-		//
+
 		glDeleteProgram(program);
 
 		SDL_DestroyWindow(window);
