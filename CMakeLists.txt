@@ -26,6 +26,7 @@ target_include_directories(${PROJECT_NAME} PUBLIC deps/conflict/include)
 target_include_directories(${PROJECT_NAME} PUBLIC deps/fmt/include)
 target_include_directories(${PROJECT_NAME} PUBLIC deps/libremidi/include)
 target_include_directories(${PROJECT_NAME} PUBLIC deps/sol2/include)
+target_include_directories(${PROJECT_NAME} PUBLIC deps/glm/glm)
 
 target_include_directories(${PROJECT_NAME} PUBLIC include)
 
@@ -40,6 +41,9 @@ target_link_libraries(${PROJECT_NAME} PRIVATE fmt)
 
 add_subdirectory(deps/sol2/)
 target_link_libraries(${PROJECT_NAME} PRIVATE sol2)
+
+add_subdirectory(deps/glm/)
+target_link_libraries(${PROJECT_NAME} PRIVATE glm)
 
 add_subdirectory("${GLAD_SOURCES_DIR}/cmake" glad_cmake)
 glad_add_library(glad REPRODUCIBLE DEBUG API gl:core=4.6)
