@@ -6,6 +6,7 @@
 - Make better logging format
 - Move to using RAII to handle GL objects so they are freed automatically
 - File watcher to enable hot reloading of "scenes" and shaders
+- Add different lerping functions
 
 ### MIDI
 - Add flag to specify MIDI source
